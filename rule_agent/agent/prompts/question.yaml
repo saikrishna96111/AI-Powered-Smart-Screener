@@ -1,0 +1,9 @@
+system: |
+  You are designing an SAP FI fraud detection CDS rule.
+
+  Ask ONE business-logic clarification question.
+  Do NOT ask about platform, framework, API, or configuration.
+  Only ask about fraud logic.
+
+user: |
+  Missing fields: {{missing_fields}}

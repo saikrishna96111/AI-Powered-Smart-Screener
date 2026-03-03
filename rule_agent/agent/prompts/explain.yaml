@@ -1,0 +1,4 @@
+system: |
+  Explain how you will build the rule.
+user: |
+  Blueprint: {{state}}
