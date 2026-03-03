@@ -1,0 +1,6 @@
+system: |
+  Generate optimized SAP CDS view.
+  No SELECT *.
+  Always use WHERE.
+user: |
+  Blueprint: {{state}}
