@@ -11,6 +11,7 @@ from .nodes import (
     explain_node,
     approval_node,
     cds_node,
+    cds_review_node,
 )
 
 
@@ -30,6 +31,7 @@ def build_graph():
     workflow.add_node("explain", explain_node)
     workflow.add_node("approval", approval_node)
     workflow.add_node("cds", cds_node)
+    workflow.add_node("cds_review", cds_review_node)
 
     # -----------------------
     # Entry Point
@@ -38,11 +40,20 @@ def build_graph():
     workflow.set_entry_point("intent")
 
     # -----------------------
-    # Initial Flow
+    # First time: ask for requirements. Later: extract from user reply.
     # -----------------------
 
-    workflow.add_edge("intent", "requirements")
+    # First time (no required_fields yet) → requirements; user replying → extract
+    workflow.add_conditional_edges(
+        "intent",
+        lambda state: (
+            "extract"
+            if state.get("required_fields") is not None
+            else "requirements"
+        ),
+    )
     workflow.add_edge("requirements", "missing")
+    workflow.add_edge("extract", "missing")
 
     # -----------------------
     # Missing Fields Branch
@@ -56,26 +67,18 @@ def build_graph():
     workflow.add_edge("question", END)
 
     # -----------------------
-    # When User Replies
-    # Graph restarts → intent runs again
-    # If intent already exists, it skips
-    # Then we extract new info
-    # -----------------------
-
-    workflow.add_edge("intent", "extract")
-    workflow.add_edge("extract", "missing")
-
-    # -----------------------
     # After Explanation
     # -----------------------
 
     workflow.add_edge("explain", "approval")
 
+    # Only generate CDS when approved and not already delivered
     workflow.add_conditional_edges(
         "approval",
-        lambda state: "cds" if state.get("approved") else END
+        lambda state: "cds" if (state.get("approved") and not state.get("cds_delivered")) else END
     )
 
-    workflow.add_edge("cds", END)
+    workflow.add_edge("cds", "cds_review")
+    workflow.add_edge("cds_review", END)
 
     return workflow.compile()
