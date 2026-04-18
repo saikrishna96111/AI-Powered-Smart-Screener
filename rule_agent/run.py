@@ -8,17 +8,21 @@ graph = build_graph()
 state = {
     "messages": [],
     "intent": None,
-    "required_fields": [],
+    "required_fields": None,
     "collected_fields": {},
     "missing_fields": [],
     "explained": False,
-    "cds_code": None
+    "approved": False,
+    "cds_delivered": False,
+    "cds_review_done": False,
+    "session_ended": False,
+    "cds_code": None,
 }
 
 print("🚀 Rule Architect Agent Started\n")
 
 while True:
-    user_input = input("You: ")
+    user_input = input("You: ").strip()
 
     state = graph.invoke({
         **state,
@@ -28,3 +32,6 @@ while True:
     if state.get("messages"):
         last = state["messages"][-1]
         print("Agent:", last.content)
+
+    if state.get("session_ended"):
+        break
