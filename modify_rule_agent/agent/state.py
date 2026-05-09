@@ -7,6 +7,7 @@ from typing_extensions import Annotated, TypedDict
 
 class ModifyRuleState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
+    modify_flow_started: bool
     cds_original: Optional[str]
     cds_working: Optional[str]
     summary_sent: bool

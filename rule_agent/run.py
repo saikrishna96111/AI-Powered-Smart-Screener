@@ -7,6 +7,7 @@ graph = build_graph()
 
 state = {
     "messages": [],
+    "cds_flow_started": False,
     "intent": None,
     "required_fields": None,
     "collected_fields": {},
@@ -19,14 +20,19 @@ state = {
     "cds_code": None,
 }
 
-print("🚀 Rule Architect Agent Started\n")
+print("Rule Architect Agent Started\n")
 
 while True:
     user_input = input("You: ").strip()
 
+    # Without a checkpointer each invoke starts the state fresh — explicitly carry the
+    # prior message history forward so add_messages appends rather than wipes. Skipping
+    # this makes extract_node see only the new "yes" with no prior assistant example,
+    # which is what caused the yes-loop on key_tables / output_grain.
+    prior_messages = list(state.get("messages") or [])
     state = graph.invoke({
         **state,
-        "messages": [HumanMessage(content=user_input)]
+        "messages": prior_messages + [HumanMessage(content=user_input)],
     })
 
     if state.get("messages"):

@@ -45,6 +45,7 @@ def main() -> None:
     state = graph.invoke(
         {
             "messages": [],
+            "modify_flow_started": True,
             "cds_original": cds,
             "cds_working": cds,
             "summary_sent": False,
@@ -69,10 +70,13 @@ def main() -> None:
             print("Goodbye.")
             break
 
+        # Without a checkpointer, invoke starts state fresh — carry prior history
+        # forward so add_messages appends. Otherwise nodes only see the new turn.
+        prior_messages = list(state.get("messages") or [])
         state = graph.invoke(
             {
                 **state,
-                "messages": [HumanMessage(content=user_input)],
+                "messages": prior_messages + [HumanMessage(content=user_input)],
             }
         )
 

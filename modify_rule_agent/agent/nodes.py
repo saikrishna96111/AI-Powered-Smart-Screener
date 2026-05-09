@@ -7,6 +7,66 @@ from .prompt_loader import load_prompt
 from .utils import extract_text
 
 
+def _is_modify_request(text: str) -> bool:
+    t = (text or "").lower()
+    has_action = any(
+        k in t for k in ("modify", "change", "update", "edit", "revise", "fix")
+    )
+    has_target = any(
+        k in t
+        for k in (
+            "cds",
+            "wrapper",
+            "view",
+            "rule",
+            "ddl",
+            "exception view",
+            "monitoring view",
+        )
+    )
+    return has_action and has_target
+
+
+def _conversation_reply(user_text: str) -> str:
+    lowered = (user_text or "").strip().lower()
+    if lowered in {"hi", "hello", "hey", "hii", "hola"}:
+        return "Hi, how can I help you?"
+
+    resp = get_llm().invoke(
+        [
+            SystemMessage(
+                content=(
+                    "You are a friendly conversational assistant for CDS rule modification. "
+                    "Reply naturally in 1-2 short sentences. "
+                    "Do not ask for technical fields yet unless the user explicitly asks to modify/update/change a CDS rule or view. "
+                    "If asked casual chat, answer naturally."
+                )
+            ),
+            HumanMessage(content=user_text or ""),
+        ]
+    )
+    text = extract_text(resp).strip()
+    if text:
+        return text
+    return "I am here and ready to help."
+
+
+def conversation_gate_node(state: dict) -> dict:
+    if state.get("modify_flow_started"):
+        return {}
+
+    last_user_msg = _last_human_instruction(state.get("messages") or [])
+
+    # If CDS is already provided (CLI path), proceed directly.
+    if (state.get("cds_working") or state.get("cds_original") or "").strip():
+        return {"modify_flow_started": True}
+
+    if _is_modify_request(last_user_msg):
+        return {"modify_flow_started": True}
+
+    return {"messages": [AIMessage(content=_conversation_reply(last_user_msg))]}
+
+
 def _last_human_instruction(messages) -> str:
     for m in reversed(messages or []):
         if isinstance(m, HumanMessage):

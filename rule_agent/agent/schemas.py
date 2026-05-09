@@ -3,7 +3,15 @@ from typing import List
 
 
 class IntentSchema(BaseModel):
-    intent: str
+    intent: str = Field(
+        description=(
+            "A SHORT business-domain label for the SAP control the user described "
+            "(2-6 words). Examples: 'Duplicate vendor invoice check', "
+            "'GR/IR clearing exception', 'Vendor bank change vs payment', "
+            "'3-way match tolerance breach'. NEVER repeat the prompt instruction "
+            "or use phrases like 'name the control' or 'from user message'."
+        )
+    )
     confidence: float = Field(
         default=1.0,
         ge=0.0,

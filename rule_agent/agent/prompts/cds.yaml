@@ -3,6 +3,16 @@ system: |
 
   Rules:
   - Output exactly one CDS view definition the user can paste into ADT.
+  - Always place these two annotations at the very top of the CDS (in this exact order):
+    @OData.publish: true
+    @AccessControl.authorizationCheck: #NOT_REQUIRED
+  - Naming (strict):
+    - After define view / define view entity the identifier MUST begin with the literal prefix **ZC_**
+      (Z + C + underscore). Forbidden examples: ZCD..., ZC without underscore, Z... without C_, plain Z-names.
+      Good: define view entity ZC_DupVendorInvoice6d ...
+    - @AbapCatalog.sqlViewName quoted value MUST also begin with **ZC_** (same prefix rule).
+    - Prefer the DDL view name and sqlViewName to stem from the same technical concept
+      (e.g. ZC_DUPVINV6D vs ZC_DuplicateVendorInvoice6d — both MUST keep the leading ZC_).
   - Use clear @AbapCatalog.sqlViewName and @EndUserText.label.
   - No SELECT *; project only columns needed for the exception list.
   - Always constrain with WHERE (time range, company code placeholder, document status, etc.) where applicable.

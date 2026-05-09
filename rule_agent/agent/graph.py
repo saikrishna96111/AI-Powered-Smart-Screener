@@ -3,6 +3,7 @@
 from langgraph.graph import StateGraph, END
 from .state import AgentState
 from .nodes import (
+    conversation_gate_node,
     intent_node,
     requirements_node,
     extract_node,
@@ -24,6 +25,7 @@ def build_graph():
     # -----------------------
 
     workflow.add_node("intent", intent_node)
+    workflow.add_node("conversation_gate", conversation_gate_node)
     workflow.add_node("requirements", requirements_node)
     workflow.add_node("extract", extract_node)
     workflow.add_node("missing", missing_node)
@@ -37,7 +39,12 @@ def build_graph():
     # Entry Point
     # -----------------------
 
-    workflow.set_entry_point("intent")
+    workflow.set_entry_point("conversation_gate")
+
+    workflow.add_conditional_edges(
+        "conversation_gate",
+        lambda state: "intent" if state.get("cds_flow_started") else END
+    )
 
     # -----------------------
     # First time: ask for requirements. Later: extract from user reply.

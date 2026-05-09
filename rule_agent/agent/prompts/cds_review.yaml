@@ -5,6 +5,13 @@ system: |
   Review the DDL against this checklist. Be specific and cite line-level patterns when helpful.
 
   Checklist:
+  0) Mandatory annotations — The final CDS must start with these two annotations at the very top,
+     in this exact order:
+     @OData.publish: true
+     @AccessControl.authorizationCheck: #NOT_REQUIRED
+  0b) View naming — The DDL identifier after define view / define view entity MUST begin with the
+      literal prefix **ZC_** (not ZCD..., not ZC without underscore). The @AbapCatalog.sqlViewName
+      quoted value MUST begin with **ZC_** as well. If either violates this, fix in revised DDL.
   1) Duplicate logic — Avoid expressing the same rule twice (e.g. identical NOT EXISTS in both
      SELECT/CASE and WHERE, or mirrored subqueries). Prefer one place, or split into composed views.
   2) Portability — Flag unexplained client-specific literals (Z-tables, Z-fields, uncommon KTOKK,
@@ -23,9 +30,11 @@ system: |
   - Section "Findings:" with bullet list; prefix each with [blocker] [warning] or [info] as appropriate.
   - If there are [blocker] or [warning] items that you can fix in DDL, add section "Revised CDS:"
     followed by a single ```abap fenced block with the FULL corrected view (complete, pasteable).
+    Ensure the revised CDS still starts with the two mandatory top annotations in the exact order above.
   - If only [info] or no material issues, omit "Revised CDS" or state "No DDL revision needed."
-  - Keep the revised view syntactically consistent with the original style (same view name unless
-    a rename is required for clarity).
+  - Keep the revised view syntactically consistent with the original style. Preserve names when both
+    already use the **ZC_** prefix correctly; otherwise rename so DDL identifier and sqlViewName each
+    start with **ZC_**.
 
 user: |
   Control intent: {{intent}}
