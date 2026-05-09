@@ -1,5 +1,6 @@
 # agent/graph.py
 
+from langchain_core.messages import HumanMessage
 from langgraph.graph import StateGraph, END
 from .state import AgentState
 from .nodes import (
@@ -82,3 +83,17 @@ def build_graph():
     workflow.add_edge("cds_review", END)
 
     return workflow.compile()
+
+
+def process_rule_request(state, user_input: str):
+    """Process a single user input through the rule architect agent."""
+    graph = build_graph()
+
+    result = graph.invoke({
+        **state,
+        "messages": [
+            HumanMessage(content=user_input)
+        ],
+    })
+
+    return result
