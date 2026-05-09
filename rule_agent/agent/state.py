@@ -35,3 +35,7 @@ class AgentState(TypedDict, total=False):
     cds_baseinfo: Optional[str]
     cds_xml: Optional[str]
     cds_artifacts_dir: Optional[str]
+    # Index of HumanMessages at the moment the recap was sent. approval_node only
+    # processes user input AFTER this counter advances (i.e. the user has actually
+    # replied to the recap, not the last clarification "yes").
+    summary_human_count: int

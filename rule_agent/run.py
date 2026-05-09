@@ -18,6 +18,7 @@ state = {
     "cds_review_done": False,
     "session_ended": False,
     "cds_code": None,
+    "summary_human_count": 0,
 }
 
 print("Rule Architect Agent Started\n")

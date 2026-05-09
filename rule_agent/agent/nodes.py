@@ -925,6 +925,10 @@ def question_node(state: dict):
 # -----------------------------
 
 
+def _human_message_count(messages) -> int:
+    return sum(1 for m in (messages or []) if isinstance(m, HumanMessage))
+
+
 def explain_node(state: dict):
 
     if state.get("explained"):
@@ -946,9 +950,18 @@ def explain_node(state: dict):
     )
     text = extract_text(resp).strip()
 
+    approval_line = "Reply **yes** to generate the CDS view, or tell me what to change."
+    if approval_line not in text:
+        # Belt-and-braces: ensure the user sees a clear approval prompt even if the
+        # LLM dropped the final line.
+        text = text.rstrip() + "\n\n" + approval_line
+
     return {
         "messages": [AIMessage(content=text)],
         "explained": True,
+        # Snapshot the human-message count so approval_node can tell whether the
+        # user has actually replied to this recap (i.e. h_count > snapshot).
+        "summary_human_count": _human_message_count(state.get("messages", [])),
     }
 
 
@@ -960,6 +973,14 @@ def explain_node(state: dict):
 def approval_node(state: dict):
 
     if not state.get("explained"):
+        return {}
+
+    # Critical: when the recap was just sent in THIS same invoke (because the user's
+    # last 'yes' merely closed the final clarification), do not consume that 'yes' as
+    # CDS approval. The graph routes to END and waits for the user's NEXT reply.
+    current_h_count = _human_message_count(state.get("messages", []))
+    summary_h_count = state.get("summary_human_count") or 0
+    if current_h_count <= summary_h_count and not state.get("cds_delivered"):
         return {}
 
     last_user_msg = _last_human_message_content(state.get("messages", [])).lower().strip()
