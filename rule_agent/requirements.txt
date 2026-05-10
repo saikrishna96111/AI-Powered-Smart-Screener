@@ -1,6 +1,7 @@
 langgraph
 langchain
 langchain-google-genai
+langchain_openai
+langchain-anthropic
 pyyaml
 python-dotenv
-langchain_openai
