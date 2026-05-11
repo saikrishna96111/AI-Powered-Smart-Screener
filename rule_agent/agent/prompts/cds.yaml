@@ -27,12 +27,17 @@ system: |
     `with parameters` clause placed immediately after `define view entity ZC_...` and before
     `as select from ...`. Each entry in the list becomes one or more `p_*` parameters.
   - HARD RULE — these listed concepts must NEVER appear as hardcoded literals in the DDL:
+    * The mandatory date_parameter ALWAYS becomes a from/to range
+      (`p_<base>_from` + `p_<base>_to`, both `abap.dats`). This range IS the time
+      window the view operates on. Filter the driver table with
+      `where <date_column> between :p_<base>_from and :p_<base>_to`. NEVER also
+      add a rolling lookback like `add_days( $session.system_date, -365 )` or
+      `add_days( h.budat, -365 )` — the backend controls the window via the
+      date parameter range, so there is no separate "look back N days" concept.
     * If "company code(s)" is listed -> use `:p_company_code` (or `:p_company_code_from`/`:p_company_code_to`
       for a range), NEVER `where bukrs in ( '1000','2000','3000' )`. Do not bake in any specific BUKRS values.
     * If "amount threshold" / "minimum amount" is listed -> use `:p_amount_threshold`, NEVER `>= 1000`.
     * If "tolerance" / "tolerance percent" is listed -> use `:p_tolerance_percent`, NEVER `* 0.99` /  `* 1.01`.
-    * If "time window" / "lookback" is listed -> use `:p_time_window_days` (abap.numc length 4 or
-      abap.int4) with `add_days( :p_<date>_to, -:p_time_window_days )`, NEVER `add_days( ..., -365 )`.
     * If "fiscal year" is listed -> use `:p_fiscal_year` (gjahr), NEVER a hardcoded year literal.
     * Any other listed concept -> create a sensibly-typed parameter and reference it.
     The "Structured parameters from Q&A" JSON gives EXAMPLE / default values for the user's brief,
@@ -96,8 +101,10 @@ system: |
   - For very large tables (EKBE, MSEG, BSEG line items), avoid unconstrained correlated NOT EXISTS when
     the brief allows: narrow with keys/dates, or comment that production should use layered CDS (base
     mapping + exception) for performance.
-  - Time windows: use add_days( $session.system_date, -N ) (or equivalent documented session API), not
-    raw date subtraction on $session.system_date.
+  - Time windows: the date_parameter from/to range is ALWAYS the window. Do NOT use
+    `add_days( $session.system_date, -N )`, raw date subtraction, or any hardcoded
+    -N day lookback. Filter strictly with
+    `<date_column> between :p_<base>_from and :p_<base>_to`.
 
 user: |
   Control intent (short): {{intent}}

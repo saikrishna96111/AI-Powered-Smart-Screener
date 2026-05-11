@@ -751,6 +751,23 @@ _FIELD_PARAM_KEYWORDS: dict[str, tuple[str, ...]] = {
 }
 
 
+# These fields are ALWAYS superseded by the mandatory date parameter:
+# its from/to range already defines the window the view operates on, so we
+# never need a separate "how many days to look back" clarification.
+_FIELDS_COVERED_BY_DATE_PARAMETER = frozenset(
+    {
+        "time_window_days",
+        "time_window",
+        "time_scope",
+        "date_window",
+        "date_range",
+        "lookback_days",
+        "lookback_period",
+        "lookback_window",
+    }
+)
+
+
 def _normalize_param_text(text: str) -> str:
     return (text or "").strip().lower()
 
@@ -769,16 +786,26 @@ def _field_covered_by_parameter(field_name: str, additional_text: str) -> bool:
 def _filter_required_fields_by_parameters(
     fields: list[str], cds_parameter_inputs: dict | None
 ) -> list[str]:
-    """Drop any required_fields entry whose subject the user already declared as a parameter."""
+    """Drop required_fields entries that are already covered by the user's CDS parameters.
+
+    Two kinds of coverage:
+      1. The mandatory date parameter ALWAYS covers any time-window / lookback field
+         (its from/to range parameterizes the window — no separate lookback question).
+      2. Anything in additional_parameters matching the keyword map above.
+    """
     if not fields:
         return list(fields or [])
     inputs = cds_parameter_inputs or {}
     additional = _normalize_param_text(inputs.get("additional_parameters") or "")
-    if not additional:
-        return list(fields)
+    date_param_present = bool(
+        _normalize_param_text(inputs.get("date_parameter") or "")
+    )
     kept: list[str] = []
     for f in fields:
-        if _field_covered_by_parameter(f, additional):
+        low = (f or "").strip().lower()
+        if date_param_present and low in _FIELDS_COVERED_BY_DATE_PARAMETER:
+            continue
+        if additional and _field_covered_by_parameter(f, additional):
             continue
         kept.append(f)
     return kept
@@ -990,10 +1017,13 @@ Always use the name key_tables for “which SAP tables drive this control” so 
 Include **at most one** tables-related field in required_fields — never list multiple synonyms (only key_tables).
 
 CRITICAL — do NOT plan a clarifying field for anything the user has already declared as a CDS view parameter:
+- The mandatory date_parameter ALWAYS supersedes any lookback / time-window question.
+  Its from/to range is what the backend will pass at runtime, so NEVER include
+  time_window_days, time_scope, lookback_days, date_window or similar — even if the
+  additional_parameters list does not mention them.
 - If the user's additional CDS parameters mention "company code(s)" or "BUKRS" → DO NOT include company_code_scope.
 - If they mention "amount threshold" / "minimum amount" → DO NOT include amount_threshold.
 - If they mention "tolerance" / "tolerance percent" → DO NOT include tolerance_percent.
-- If they mention "time window" / "lookback" / "rolling window" → DO NOT include time_window_days.
 - If they mention "exclusion(s)" → DO NOT include exclusions.
 The values for these will come from the backend at runtime, so we must NOT ask the user to give a hardcoded value.
 
