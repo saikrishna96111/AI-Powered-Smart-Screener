@@ -45,3 +45,31 @@ class ExtractBatchSchema(BaseModel):
 class ReadinessSchema(BaseModel):
     ready: bool
     missing_fields: List[str]
+
+
+class SyntaxReviewSchema(BaseModel):
+    """Output of the ABAP CDS syntax validator (used by syntax_review_node)."""
+
+    syntax_status: str = Field(
+        description=(
+            "Either 'PASSED' (the CDS is valid ABAP CDS that activates in ADT) or "
+            "'FAILED' (the CDS contains constructs unsupported in ABAP CDS). "
+            "Use uppercase exactly."
+        )
+    )
+    issues: List[str] = Field(
+        default_factory=list,
+        description=(
+            "When syntax_status is FAILED, list each ABAP CDS rule that was violated "
+            "as one bullet (e.g. 'EXISTS subquery is not supported in ABAP CDS — replace "
+            "with a LEFT OUTER JOIN'). Empty when PASSED."
+        ),
+    )
+    corrected_cds: str = Field(
+        default="",
+        description=(
+            "When syntax_status is FAILED, return the FULL corrected CDS DDL — same "
+            "view name, same business logic, but only using ABAP-CDS-supported syntax. "
+            "Wrap in nothing — emit raw CDS source. Empty string when PASSED."
+        ),
+    )

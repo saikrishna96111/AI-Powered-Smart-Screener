@@ -20,6 +20,69 @@ system: |
   - If the brief is ambiguous, choose conservative defaults and mention them in comments inside the CDS (// ...).
   - Wrap the full CDS source in one markdown fenced block using ```abap ... ```.
 
+  CDS view parameters (mandatory section — the values come from the backend at runtime):
+  - The user-supplied "CDS parameter inputs" section ALWAYS contains at least a mandatory
+    `date_parameter` and may contain `additional_parameters` (free-form, comma/and separated list).
+  - You MUST declare every concept listed there as an ABAP CDS view parameter using the
+    `with parameters` clause placed immediately after `define view entity ZC_...` and before
+    `as select from ...`. Each entry in the list becomes one or more `p_*` parameters.
+  - HARD RULE — these listed concepts must NEVER appear as hardcoded literals in the DDL:
+    * If "company code(s)" is listed -> use `:p_company_code` (or `:p_company_code_from`/`:p_company_code_to`
+      for a range), NEVER `where bukrs in ( '1000','2000','3000' )`. Do not bake in any specific BUKRS values.
+    * If "amount threshold" / "minimum amount" is listed -> use `:p_amount_threshold`, NEVER `>= 1000`.
+    * If "tolerance" / "tolerance percent" is listed -> use `:p_tolerance_percent`, NEVER `* 0.99` /  `* 1.01`.
+    * If "time window" / "lookback" is listed -> use `:p_time_window_days` (abap.numc length 4 or
+      abap.int4) with `add_days( :p_<date>_to, -:p_time_window_days )`, NEVER `add_days( ..., -365 )`.
+    * If "fiscal year" is listed -> use `:p_fiscal_year` (gjahr), NEVER a hardcoded year literal.
+    * Any other listed concept -> create a sensibly-typed parameter and reference it.
+    The "Structured parameters from Q&A" JSON gives EXAMPLE / default values for the user's brief,
+    but if the same concept is in "CDS parameter inputs" those values are illustrative ONLY — they
+    must NOT appear as literals in the DDL. They may appear in a `// example default: 1000` comment.
+  - Example:
+
+        define view entity ZC_DupVendorInvoice
+          with parameters
+            @EndUserText.label: 'Date From'
+            p_date_from        : abap.dats,
+            @EndUserText.label: 'Date To'
+            p_date_to          : abap.dats,
+            @EndUserText.label: 'Company Code'
+            p_company_code     : bukrs,
+            @EndUserText.label: 'Amount Threshold'
+            p_amount_threshold : abap.dec( 15, 2 )
+          as select from bkpf as a
+          ...
+          where a.budat between :p_date_from and :p_date_to
+            and a.bukrs = :p_company_code
+
+  Parameter naming & typing rules:
+  - Every CDS parameter name MUST start with `p_` and use lowercase snake_case.
+  - For the mandatory `date_parameter`, prefer a from/to date range: declare BOTH
+    `p_<base>_from : abap.dats` and `p_<base>_to : abap.dats` (e.g. `p_posting_date_from`,
+    `p_posting_date_to`). If a single-point date clearly fits the brief better, declare one
+    `p_<base> : abap.dats`. Either way it MUST be at least one `abap.dats` parameter.
+  - Infer concrete ABAP types for additional parameters based on the user's wording:
+      * company code      -> bukrs
+      * fiscal year       -> gjahr
+      * vendor            -> lifnr
+      * customer          -> kunnr
+      * material          -> matnr
+      * plant             -> werks
+      * document number   -> belnr
+      * profit center     -> prctr
+      * cost center       -> kostl
+      * currency          -> waers
+      * amount / threshold/ tolerance amount -> abap.dec( 15, 2 )
+      * percent / tolerance percent          -> abap.dec( 5, 2 )
+      * any other code/text -> abap.char( <reasonable length> )
+  - Reference parameters in WHERE / JOIN ON / CASE with the leading colon syntax (`:p_xxx`).
+  - Always put an `@EndUserText.label: '<Human Readable>'` annotation immediately above EACH
+    parameter line so the backend / ADT shows a friendly label.
+  - The values from the existing Q&A (time_window_days, amount_threshold, exclusions, etc.)
+    must NOT be hardcoded literals when there is a matching CDS parameter — use the parameter
+    instead. Hardcoded literals are only acceptable for defaults the user did not turn into a
+    parameter (and they should be commented `// example default — replace via parameter / mapping`).
+
   Engineering quality (apply on every control, not only MM/FI):
   - Do not duplicate the same exception rule in two places (e.g. identical NOT EXISTS in both a CASE
     in the SELECT list and again in WHERE). Express the rule once, or split into a second CDS view
@@ -41,6 +104,9 @@ user: |
 
   Structured parameters from Q&A (may be empty):
   {{params}}
+
+  CDS parameter inputs (these MUST become CDS view parameters via `with parameters`):
+  {{cds_parameter_inputs}}
 
   Full user description of the check (paste / narrative):
   {{description}}

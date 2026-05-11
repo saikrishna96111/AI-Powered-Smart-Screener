@@ -30,12 +30,28 @@ class AgentState(TypedDict, total=False):
     approved: bool
     cds_delivered: bool
     session_ended: bool
-    # Companion artifacts emitted alongside the CDS view (baseinfo JSON, abapGit XML)
+    # Companion artifacts emitted alongside the CDS view (baseinfo JSON, abapGit XML,
+    # plus the new parameters JSON consumed by the backend at runtime).
     cds_ddl_name: Optional[str]
     cds_baseinfo: Optional[str]
     cds_xml: Optional[str]
+    cds_parameters_text: Optional[str]
     cds_artifacts_dir: Optional[str]
+    # CDS view parameter collection (runs after required_fields are filled).
+    # params_phase walks the user through: None -> "ask_date" -> "ask_more" -> "done"
+    # cds_parameter_inputs stores the raw user answers for the parameter questions.
+    # cds_parameters is the structured list parsed out of the generated CDS
+    # (name + type + label) that ends up in the .parameters file.
+    params_phase: Optional[str]
+    cds_parameter_inputs: Dict[str, str]
+    cds_parameters: List[Dict[str, str]]
+    parameters_collection_done: bool
     # Index of HumanMessages at the moment the recap was sent. approval_node only
     # processes user input AFTER this counter advances (i.e. the user has actually
     # replied to the recap, not the last clarification "yes").
     summary_human_count: int
+    # Self-healing CDS syntax review (runs between cds and cds_review).
+    cds_syntax_status: Optional[str]   # "PASSED", "FAILED", or "ERROR"
+    cds_syntax_issues: List[str]
+    cds_syntax_retries: int            # number of fix attempts actually made
+    cds_syntax_review_done: bool

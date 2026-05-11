@@ -10,7 +10,12 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from .llm import llm
 from .prompt_loader import load_prompt
-from .schemas import ExtractBatchSchema, IntentSchema, RequiredFieldsPlan
+from .schemas import (
+    ExtractBatchSchema,
+    IntentSchema,
+    RequiredFieldsPlan,
+    SyntaxReviewSchema,
+)
 from .utils import extract_text
 
 # Verbs that signal the user wants something built (includes gerunds: "creating", "making").
@@ -604,6 +609,259 @@ def _format_params(collected: dict) -> str:
     return json.dumps(collected or {}, indent=2, ensure_ascii=False)
 
 
+# -----------------------------
+# CDS PARAMETERS COLLECTION HELPERS
+# -----------------------------
+
+
+_NEGATIVE_PARAM_RESPONSES = {
+    "no",
+    "nope",
+    "nah",
+    "none",
+    "no thanks",
+    "no, thanks",
+    "skip",
+    "n/a",
+    "na",
+    "not now",
+    "no additional",
+    "nothing",
+    "nothing else",
+    "no more",
+    "no more params",
+    "no more parameters",
+    "no parameters",
+}
+
+_DATE_PARAMETER_EXAMPLE = "posting date"
+_ADDITIONAL_PARAMETERS_EXAMPLE = "company code, fiscal year, amount threshold"
+
+
+def _strip_inline_keys(text: str, keys: tuple[str, ...]) -> str:
+    """Drop a leading ``key=`` / ``key:`` prefix the user typed when answering."""
+    cleaned = (text or "").strip().strip("`").strip()
+    for key in keys:
+        m = re.match(rf"^{re.escape(key)}\s*[:=]\s*(.+)$", cleaned, re.IGNORECASE)
+        if m:
+            cleaned = m.group(1).strip()
+            break
+    return cleaned.strip()
+
+
+def _parse_date_parameter_response(text: str) -> str:
+    """Capture the user's reply to the mandatory date-parameter question.
+
+    Accepts: a plain phrase ("creation date"), a `key=value` line, or a pure
+    affirmation (which means "use the example as-is").
+    """
+    raw = _normalize_turn_text(text or "")
+    if not raw:
+        return _DATE_PARAMETER_EXAMPLE
+    if _is_pure_affirmation(raw):
+        return _DATE_PARAMETER_EXAMPLE
+    pairs = _extract_kv_pairs_ordered(raw)
+    for k, v in pairs:
+        if "date" in k or k in {"date_parameter", "mandatory_date", "p_date"}:
+            return v
+    return _strip_inline_keys(raw, ("date_parameter", "date"))
+
+
+def _parse_additional_parameters_response(text: str) -> str:
+    """Capture the user's reply to the optional additional-parameters question.
+
+    Empty string means "no additional parameters". Otherwise the value is a
+    free-form list (comma / "and" / semicolon separated) that the CDS prompt
+    and the downstream parameter parser will both interpret.
+    """
+    raw = _normalize_turn_text(text or "")
+    if not raw:
+        return ""
+    low = raw.lower().rstrip(".!? ").strip()
+    if low in _NEGATIVE_PARAM_RESPONSES:
+        return ""
+    if _is_pure_affirmation(raw):
+        return _ADDITIONAL_PARAMETERS_EXAMPLE
+    pairs = _extract_kv_pairs_ordered(raw)
+    for k, v in pairs:
+        if "additional" in k or k in {"parameters", "extra_parameters", "more_parameters"}:
+            return v
+    return _strip_inline_keys(raw, ("additional_parameters", "parameters", "more"))
+
+
+def _split_parameter_list(raw: str) -> list[str]:
+    """Split a user list like ``company code, fiscal year and amount threshold`` into items."""
+    if not raw:
+        return []
+    text = re.sub(r"\s+\band\b\s+", ",", raw, flags=re.IGNORECASE)
+    parts = re.split(r"[;,\n]+", text)
+    out: list[str] = []
+    seen: set[str] = set()
+    for p in parts:
+        item = p.strip().strip("`").strip()
+        if not item:
+            continue
+        key = item.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+    return out
+
+
+# Keyword aliases that let us decide which clarifying questions are SUPERSEDED
+# by the user's CDS parameter list. If any keyword for a planner field appears
+# inside the user's additional_parameters answer, that field is dropped from
+# required_fields (so we don't ask for a hardcoded value the user already said
+# is a runtime parameter).
+_FIELD_PARAM_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "company_code_scope": (
+        "company code",
+        "company codes",
+        "bukrs",
+    ),
+    "amount_threshold": (
+        "amount threshold",
+        "minimum amount",
+        "minimum invoice amount",
+        "threshold amount",
+        "min amount",
+        "min invoice amount",
+        "wrbtr threshold",
+    ),
+    "tolerance_percent": (
+        "tolerance percent",
+        "tolerance %",
+        "match tolerance",
+        "amount tolerance",
+        "tolerance",
+    ),
+    "time_window_days": (
+        "time window",
+        "lookback",
+        "look back",
+        "look-back",
+        "rolling window",
+        "date window",
+        "time scope",
+    ),
+    "exclusions": (
+        "exclusion",  # matches "exclusion" and "exclusions"
+    ),
+}
+
+
+def _normalize_param_text(text: str) -> str:
+    return (text or "").strip().lower()
+
+
+def _field_covered_by_parameter(field_name: str, additional_text: str) -> bool:
+    """True if any keyword for ``field_name`` appears in the user's parameter answer."""
+    if not field_name or not additional_text:
+        return False
+    keywords = _FIELD_PARAM_KEYWORDS.get(field_name.strip().lower())
+    if not keywords:
+        return False
+    haystack = _normalize_param_text(additional_text)
+    return any(kw in haystack for kw in keywords)
+
+
+def _filter_required_fields_by_parameters(
+    fields: list[str], cds_parameter_inputs: dict | None
+) -> list[str]:
+    """Drop any required_fields entry whose subject the user already declared as a parameter."""
+    if not fields:
+        return list(fields or [])
+    inputs = cds_parameter_inputs or {}
+    additional = _normalize_param_text(inputs.get("additional_parameters") or "")
+    if not additional:
+        return list(fields)
+    kept: list[str] = []
+    for f in fields:
+        if _field_covered_by_parameter(f, additional):
+            continue
+        kept.append(f)
+    return kept
+
+
+# -----------------------------
+# PARAMETERS NODE
+# -----------------------------
+
+
+DATE_PARAMETER_QUESTION_TEMPLATE = """Great, the business design for **{intent}** is captured. \
+Now let's define the **CDS view parameters** the backend will pass at runtime (so values aren't hardcoded).
+
+1\u20e3 **What is the mandatory date parameter?**
+*(The date field this view will be parameterized on \u2014 e.g. creation date, posting date, document date, clearing date.)*
+
+Reply in your own words (e.g. "creation date"), or accept this example:
+
+`date_parameter={example}`
+
+Reply **yes** to use that example as-is."""
+
+
+ADDITIONAL_PARAMETERS_QUESTION_TEMPLATE = """Got it \u2014 date parameter captured (**{date_param}**).
+
+1\u20e3 **Do you want to add any additional parameters?**
+*(They will also become CDS view parameters your backend can pass values for \u2014 e.g. company code, fiscal year, amount threshold, vendor account group.)*
+
+- Reply **no** to skip (date parameter only).
+- Or list them comma-separated, for example: `additional_parameters={example}`
+- Or reply **yes** to accept the example list as-is."""
+
+
+def parameters_node(state: dict):
+    """State machine: ask for the mandatory date parameter, then for optional extras.
+
+    Each turn either emits one question and ends the turn (waiting for the user
+    to reply) or, when both answers are in, sets parameters_collection_done so
+    the graph falls through to ``explain``.
+    """
+
+    if state.get("parameters_collection_done"):
+        return {}
+
+    phase = state.get("params_phase")
+    intent_txt = (state.get("intent") or "your SAP monitoring control").strip()
+
+    if phase is None:
+        body = DATE_PARAMETER_QUESTION_TEMPLATE.format(
+            intent=intent_txt, example=_DATE_PARAMETER_EXAMPLE
+        )
+        return {
+            "params_phase": "ask_date",
+            "messages": [AIMessage(content=body)],
+        }
+
+    last_user_msg = _last_human_message_content(state.get("messages", []))
+    inputs = dict(state.get("cds_parameter_inputs") or {})
+
+    if phase == "ask_date":
+        date_value = _parse_date_parameter_response(last_user_msg) or _DATE_PARAMETER_EXAMPLE
+        inputs["date_parameter"] = date_value
+        body = ADDITIONAL_PARAMETERS_QUESTION_TEMPLATE.format(
+            date_param=date_value, example=_ADDITIONAL_PARAMETERS_EXAMPLE
+        )
+        return {
+            "params_phase": "ask_more",
+            "cds_parameter_inputs": inputs,
+            "messages": [AIMessage(content=body)],
+        }
+
+    if phase == "ask_more":
+        more_value = _parse_additional_parameters_response(last_user_msg)
+        inputs["additional_parameters"] = more_value
+        return {
+            "params_phase": "done",
+            "cds_parameter_inputs": inputs,
+            "parameters_collection_done": True,
+        }
+
+    return {"parameters_collection_done": True}
+
+
 def _fields_still_needed(required: list[str], collected: dict) -> list[str]:
     """Keys from required_fields that are absent or empty in collected_fields."""
     out: list[str] = []
@@ -698,6 +956,15 @@ def requirements_node(state: dict):
 
     user_text = _all_user_text(state.get("messages", []))
     intent = state.get("intent") or ""
+    cds_params = dict(state.get("cds_parameter_inputs") or {})
+    additional_params_text = (cds_params.get("additional_parameters") or "").strip()
+    date_param_text = (cds_params.get("date_parameter") or "").strip()
+
+    parameters_summary = (
+        f"- Mandatory date parameter (already a CDS parameter): {date_param_text or '(none)'}\n"
+        f"- Additional CDS parameters declared by the user: "
+        f"{additional_params_text or '(none)'}"
+    )
 
     structured_llm = llm.with_structured_output(
         RequiredFieldsPlan,
@@ -712,6 +979,9 @@ Control intent: {intent}
 User message(s):
 {user_text}
 
+CDS view parameters already declared (the backend will pass these at runtime):
+{parameters_summary}
+
 Return required_fields: 3–7 short names for facts still needed. Prefer these exact names when applicable:
 key_tables (tables/sources), exception_or_match_logic, time_window_days (or time_scope),
 amount_threshold, tolerance_percent, company_code_scope, output_grain, exclusions.
@@ -719,15 +989,23 @@ amount_threshold, tolerance_percent, company_code_scope, output_grain, exclusion
 Always use the name key_tables for “which SAP tables drive this control” so confirmation examples match extraction.
 Include **at most one** tables-related field in required_fields — never list multiple synonyms (only key_tables).
 
+CRITICAL — do NOT plan a clarifying field for anything the user has already declared as a CDS view parameter:
+- If the user's additional CDS parameters mention "company code(s)" or "BUKRS" → DO NOT include company_code_scope.
+- If they mention "amount threshold" / "minimum amount" → DO NOT include amount_threshold.
+- If they mention "tolerance" / "tolerance percent" → DO NOT include tolerance_percent.
+- If they mention "time window" / "lookback" / "rolling window" → DO NOT include time_window_days.
+- If they mention "exclusion(s)" → DO NOT include exclusions.
+The values for these will come from the backend at runtime, so we must NOT ask the user to give a hardcoded value.
+
 If the user already gave enough detail on involved tables, how to detect the exception,
 time scope, and thresholds/tolerances when relevant, return an empty list.
 
 Do not ask about tools, transport, or non-SAP configuration."""
     )
 
-    return {
-        "required_fields": _normalize_required_fields(list(result.required_fields or [])),
-    }
+    planned = _normalize_required_fields(list(result.required_fields or []))
+    filtered = _filter_required_fields_by_parameters(planned, cds_params)
+    return {"required_fields": filtered}
 
 
 # -----------------------------
@@ -939,6 +1217,10 @@ def explain_node(state: dict):
         data["user"]
         .replace("{{intent}}", state.get("intent") or "")
         .replace("{{params}}", _format_params(state.get("collected_fields", {})))
+        .replace(
+            "{{cds_parameter_inputs}}",
+            _format_params(state.get("cds_parameter_inputs", {})),
+        )
         .replace("{{description}}", _all_user_text(state.get("messages", [])))
     )
 
@@ -1118,10 +1400,117 @@ def _extract_ddtext(cds_code: str) -> str | None:
     return m.group(1).strip() if m else None
 
 
+_PARAM_RESERVED_WORDS = frozenset(
+    {
+        "with",
+        "parameters",
+        "as",
+        "select",
+        "from",
+        "join",
+        "where",
+        "group",
+        "having",
+        "key",
+        "association",
+        "to",
+        "on",
+    }
+)
+
+
+def _humanize_parameter_name(param_name: str) -> str:
+    """``p_date_from`` -> ``Date From``; ``p_company_code`` -> ``Company Code``."""
+    cleaned = re.sub(r"^p_", "", (param_name or "").strip(), flags=re.IGNORECASE)
+    parts = [p for p in re.split(r"[_\s]+", cleaned) if p]
+    if not parts:
+        return param_name or ""
+    return " ".join(p.capitalize() for p in parts)
+
+
+def _extract_cds_parameters(cds_code: str) -> list[dict]:
+    """Parse the ``with parameters ... as select`` block of a CDS DDL.
+
+    Returns a list of dicts: ``[{"name", "type", "label"}]``. Empty list if the
+    view declares no parameters. Annotation lines (``@EndUserText.label: '...'``)
+    immediately preceding a parameter line are picked up as the label.
+    """
+    if not cds_code:
+        return []
+    cleaned = _strip_cds_comments(cds_code)
+    block_match = re.search(
+        r"\bwith\s+parameters\b(.*?)\bas\s+(?:select|projection|with|join)\b",
+        cleaned,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if not block_match:
+        return []
+    block = block_match.group(1)
+
+    pending_label: str | None = None
+    out: list[dict] = []
+    seen: set[str] = set()
+
+    for raw_line in block.splitlines():
+        line = raw_line.strip().rstrip(",").strip()
+        if not line:
+            continue
+        if line.startswith("@"):
+            m = re.match(
+                r"@EndUserText\.label\s*:\s*'([^']{1,120})'",
+                line,
+            )
+            if m:
+                pending_label = m.group(1).strip()
+            continue
+        m = re.match(
+            r"^([a-zA-Z_][\w]*)\s*:\s*([a-zA-Z_][\w.]*(?:\s*\(\s*\d+(?:\s*,\s*\d+)?\s*\))?)",
+            line,
+        )
+        if not m:
+            continue
+        name = m.group(1).strip()
+        if name.lower() in _PARAM_RESERVED_WORDS:
+            continue
+        type_str = re.sub(r"\s+", "", m.group(2))
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(
+            {
+                "name": name,
+                "type": type_str,
+                "label": (pending_label or _humanize_parameter_name(name)),
+            }
+        )
+        pending_label = None
+
+    return out
+
+
 def _build_baseinfo_json(tables: list[str]) -> str:
     """{ "BASEINFO": { "FROM": [TABLE1, TABLE2, ...] } } — pretty-printed."""
     return json.dumps(
         {"BASEINFO": {"FROM": list(tables)}}, indent=2, ensure_ascii=False
+    )
+
+
+def _build_parameters_json(parameters: list[dict], ddl_name: str) -> str:
+    """JSON payload the backend reads to know which values to send to the CDS view.
+
+    Shape mirrors baseinfo for consistency:
+        { "PARAMETERS": { "VIEW": "ZC_...", "LIST": [ {name,type,label}, ... ] } }
+    """
+    return json.dumps(
+        {
+            "PARAMETERS": {
+                "VIEW": ddl_name or "",
+                "LIST": list(parameters or []),
+            }
+        },
+        indent=2,
+        ensure_ascii=False,
     )
 
 
@@ -1162,8 +1551,9 @@ def _write_cds_artifacts(
     cds_code: str,
     baseinfo_text: str,
     xml_text: str,
+    parameters_text: str,
 ) -> str | None:
-    """Write the three files into ./generated_cds/<ddl_name>/. Returns the dir, or None on error."""
+    """Write the four files into ./generated_cds/<ddl_name>/. Returns the dir, or None on error."""
     safe_name = re.sub(r"[^A-Za-z0-9_]+", "_", ddl_name or "ZC_GENERATED").strip("_") or "ZC_GENERATED"
     base_root = os.path.abspath(
         os.path.join(os.getcwd(), "generated_cds")
@@ -1189,6 +1579,12 @@ def _write_cds_artifacts(
             encoding="utf-8",
         ) as f:
             f.write(xml_text or "")
+        with open(
+            os.path.join(out_dir, f"{safe_name}.parameters"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            f.write(parameters_text or "")
     except OSError:
         return None
     return out_dir
@@ -1196,14 +1592,20 @@ def _write_cds_artifacts(
 
 def _build_cds_artifacts(
     cds_code: str, intent: str
-) -> tuple[str, list[str], str, str]:
-    """Returns (ddl_name, tables, baseinfo_text, xml_text) for a freshly generated CDS DDL."""
+) -> tuple[str, list[str], str, str, str, list[dict]]:
+    """Returns (ddl_name, tables, baseinfo_text, xml_text, parameters_text, parameters).
+
+    parameters is the structured list parsed out of the ``with parameters``
+    clause; parameters_text is the JSON written to the ``.parameters`` file.
+    """
     ddl_name = _extract_ddl_name(cds_code) or "ZC_GeneratedView"
     tables = _extract_from_tables(cds_code)
     ddtext = _extract_ddtext(cds_code) or (intent or "Generated CDS view")
     baseinfo_text = _build_baseinfo_json(tables)
     xml_text = _build_abapgit_ddls_xml(ddl_name, ddtext)
-    return ddl_name, tables, baseinfo_text, xml_text
+    parameters = _extract_cds_parameters(cds_code)
+    parameters_text = _build_parameters_json(parameters, ddl_name)
+    return ddl_name, tables, baseinfo_text, xml_text, parameters_text, parameters
 
 
 # -----------------------------
@@ -1221,6 +1623,10 @@ def cds_node(state: dict):
         data["user"]
         .replace("{{intent}}", state.get("intent") or "")
         .replace("{{params}}", _format_params(state.get("collected_fields", {})))
+        .replace(
+            "{{cds_parameter_inputs}}",
+            _format_params(state.get("cds_parameter_inputs", {})),
+        )
         .replace("{{description}}", _all_user_text(state.get("messages", [])))
     )
 
@@ -1235,10 +1641,17 @@ def cds_node(state: dict):
     fence = re.search(r"```(?:abap|cds)?\s*\n([\s\S]*?)```", body, re.IGNORECASE)
     cds_code = fence.group(1).strip() if fence else body
 
-    ddl_name, tables, baseinfo_text, xml_text = _build_cds_artifacts(
-        cds_code, state.get("intent") or ""
+    (
+        ddl_name,
+        _tables,
+        baseinfo_text,
+        xml_text,
+        parameters_text,
+        parameters,
+    ) = _build_cds_artifacts(cds_code, state.get("intent") or "")
+    out_dir = _write_cds_artifacts(
+        ddl_name, cds_code, baseinfo_text, xml_text, parameters_text
     )
-    out_dir = _write_cds_artifacts(ddl_name, cds_code, baseinfo_text, xml_text)
 
     artifacts_block = (
         f"\n\n---\n\n**Companion artifacts** (also saved to `{out_dir}`)"
@@ -1247,7 +1660,8 @@ def cds_node(state: dict):
     )
     artifacts_block += (
         f"\n\n`{ddl_name}.baseinfo`\n\n```json\n{baseinfo_text}\n```\n\n"
-        f"`{ddl_name}.ddls.xml`\n\n```xml\n{xml_text}```"
+        f"`{ddl_name}.ddls.xml`\n\n```xml\n{xml_text}```\n\n"
+        f"`{ddl_name}.parameters`\n\n```json\n{parameters_text}\n```"
     )
 
     confirmation = (
@@ -1262,8 +1676,205 @@ def cds_node(state: dict):
         "cds_ddl_name": ddl_name,
         "cds_baseinfo": baseinfo_text,
         "cds_xml": xml_text,
+        "cds_parameters_text": parameters_text,
+        "cds_parameters": parameters,
         "cds_artifacts_dir": out_dir,
     }
+
+
+# -----------------------------
+# SYNTAX REVIEW NODE (auto-healing loop)
+# Runs BEFORE cds_review_node so we ensure the DDL is syntactically valid
+# ABAP CDS before any performance/architecture review.
+# -----------------------------
+
+
+MAX_SYNTAX_FIX_RETRIES = 3
+
+
+def _strip_cds_fences(text: str) -> str:
+    """If the LLM wrapped the corrected_cds in ```abap … ``` despite the prompt rule,
+    pull out the code anyway."""
+    if not text:
+        return ""
+    fence = re.search(r"```(?:abap|cds|sql)?\s*\n?([\s\S]*?)```", text, re.IGNORECASE)
+    if fence:
+        return fence.group(1).strip()
+    return text.strip()
+
+
+def _format_issue_lines(issues: list[str]) -> str:
+    if not issues:
+        return "(none)"
+    return "\n".join(f"- {ln.strip().lstrip('- ').strip()}" for ln in issues if ln and ln.strip())
+
+
+def syntax_review_node(state: dict):
+    """Validate that the generated CDS uses only ABAP-CDS-supported syntax. If not,
+    iteratively ask the LLM to rewrite using supported constructs (up to
+    MAX_SYNTAX_FIX_RETRIES). Updates `cds_code` + companion artifacts in place."""
+
+    # Skip switch (handy for offline testing or when the user just wants the raw draft).
+    if os.getenv("RULE_AGENT_SKIP_CDS_SYNTAX_REVIEW", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return {
+            "cds_syntax_status": "SKIPPED",
+            "cds_syntax_issues": [],
+            "cds_syntax_retries": 0,
+            "cds_syntax_review_done": True,
+        }
+
+    # Don't re-run on subsequent turns.
+    if state.get("cds_syntax_review_done"):
+        return {}
+
+    cds_code = state.get("cds_code") or ""
+    if not cds_code or not state.get("cds_delivered"):
+        return {}
+
+    data = load_prompt("cds_syntax_review")
+    intent = state.get("intent") or ""
+    params_json = _format_params(state.get("collected_fields", {}))
+
+    structured_llm = llm.with_structured_output(
+        SyntaxReviewSchema,
+        method="function_calling",
+    )
+
+    issues_so_far: list[str] = []
+    final_status = "FAILED"
+    retries_used = 0
+    last_error: str | None = None
+
+    for attempt in range(1, MAX_SYNTAX_FIX_RETRIES + 1):
+        prior_issues = _format_issue_lines(issues_so_far)
+        user_block = (
+            data["user"]
+            .replace("{{intent}}", intent)
+            .replace("{{params}}", params_json)
+            .replace("{{cds_code}}", cds_code)
+            .replace("{{prior_issues}}", prior_issues)
+            .replace("{{attempt}}", str(attempt))
+            .replace("{{max_attempts}}", str(MAX_SYNTAX_FIX_RETRIES))
+        )
+
+        try:
+            result = structured_llm.invoke(
+                [
+                    SystemMessage(content=data["system"]),
+                    HumanMessage(content=user_block),
+                ]
+            )
+        except Exception as exc:  # network / SDK / schema errors must not crash the run
+            last_error = f"{type(exc).__name__}: {exc}"
+            issues_so_far.append(f"Validator call failed: {last_error}")
+            break
+
+        status = (result.syntax_status or "").strip().upper()
+        new_issues = [s for s in (result.issues or []) if s and s.strip()]
+        retries_used = attempt
+
+        if status == "PASSED":
+            final_status = "PASSED"
+            # On a clean pass with no rewrites, leave issues_so_far as accumulated history
+            break
+
+        # FAILED → adopt the corrected DDL and loop again
+        rewritten = _strip_cds_fences(result.corrected_cds or "")
+        if not rewritten or len(rewritten) < 60:
+            # Validator said FAILED but didn't return a usable rewrite — stop trying.
+            issues_so_far.extend(new_issues)
+            issues_so_far.append(
+                "Validator returned FAILED but provided no usable corrected_cds — stopping."
+            )
+            final_status = "FAILED"
+            break
+
+        issues_so_far.extend(new_issues)
+        cds_code = rewritten
+        # Loop continues with the rewritten CDS
+
+    # Recompute companion artifacts for whatever cds_code we finished with
+    (
+        ddl_name,
+        _tables,
+        baseinfo_text,
+        xml_text,
+        parameters_text,
+        parameters,
+    ) = _build_cds_artifacts(cds_code, intent)
+    out_dir = _write_cds_artifacts(
+        ddl_name, cds_code, baseinfo_text, xml_text, parameters_text
+    )
+
+    # Build the user-facing summary
+    if final_status == "PASSED" and retries_used == 1:
+        header = (
+            "**Syntax review** — passed on first attempt. "
+            "The CDS uses only ABAP-CDS-supported syntax."
+        )
+    elif final_status == "PASSED":
+        header = (
+            f"**Syntax review** — passed after {retries_used - 1} fix attempt"
+            f"{'s' if retries_used - 1 != 1 else ''}. "
+            "The CDS now uses only ABAP-CDS-supported syntax."
+        )
+    elif last_error:
+        header = (
+            f"**Syntax review** — could not run (validator error after "
+            f"{retries_used} attempt(s)). Continuing with the original DDL."
+        )
+    else:
+        header = (
+            f"**Syntax review** — still has issues after "
+            f"{MAX_SYNTAX_FIX_RETRIES} attempts. Continuing, but please "
+            "double-check before activating in ADT."
+        )
+
+    issues_block = ""
+    if issues_so_far:
+        issues_block = (
+            "\n\nIssues addressed during the auto-fix loop:\n"
+            + _format_issue_lines(issues_so_far)
+        )
+
+    code_changed = cds_code != (state.get("cds_code") or "")
+    revised_block = ""
+    if code_changed:
+        revised_block += "\n\n**Updated CDS view (after syntax fixes):**\n\n```abap\n"
+        revised_block += cds_code
+        revised_block += "\n```"
+        revised_block += (
+            f"\n\n**Updated companion artifacts** "
+            + (f"(rewritten in `{out_dir}`)" if out_dir else "(disk write failed)")
+            + f"\n\n`{ddl_name}.baseinfo`\n\n```json\n{baseinfo_text}\n```\n\n"
+            f"`{ddl_name}.ddls.xml`\n\n```xml\n{xml_text}```\n\n"
+            f"`{ddl_name}.parameters`\n\n```json\n{parameters_text}\n```"
+        )
+
+    message = header + issues_block + revised_block
+
+    out: dict = {
+        "messages": [AIMessage(content=message)],
+        "cds_syntax_status": final_status,
+        "cds_syntax_issues": issues_so_far,
+        "cds_syntax_retries": max(0, retries_used - 1) if final_status == "PASSED" else retries_used,
+        "cds_syntax_review_done": True,
+    }
+
+    if code_changed:
+        out["cds_code"] = cds_code
+        out["cds_ddl_name"] = ddl_name
+        out["cds_baseinfo"] = baseinfo_text
+        out["cds_xml"] = xml_text
+        out["cds_parameters_text"] = parameters_text
+        out["cds_parameters"] = parameters
+        out["cds_artifacts_dir"] = out_dir
+
+    return out
 
 
 # -----------------------------
@@ -1327,20 +1938,30 @@ def cds_review_node(state: dict):
             out["cds_code"] = candidate
 
     if refined:
-        # Re-generate the companion files so baseinfo/xml track the revised DDL.
-        ddl_name, tables, baseinfo_text, xml_text = _build_cds_artifacts(
-            refined, state.get("intent") or ""
+        # Re-generate the companion files so baseinfo/xml/parameters track the revised DDL.
+        (
+            ddl_name,
+            _tables,
+            baseinfo_text,
+            xml_text,
+            parameters_text,
+            parameters,
+        ) = _build_cds_artifacts(refined, state.get("intent") or "")
+        out_dir = _write_cds_artifacts(
+            ddl_name, refined, baseinfo_text, xml_text, parameters_text
         )
-        out_dir = _write_cds_artifacts(ddl_name, refined, baseinfo_text, xml_text)
         out["cds_ddl_name"] = ddl_name
         out["cds_baseinfo"] = baseinfo_text
         out["cds_xml"] = xml_text
+        out["cds_parameters_text"] = parameters_text
+        out["cds_parameters"] = parameters
         out["cds_artifacts_dir"] = out_dir
         review_message += (
             f"\n\n---\n\n**Revised companion artifacts** "
             + (f"(updated in `{out_dir}`)" if out_dir else "(disk write failed)")
             + f"\n\n`{ddl_name}.baseinfo`\n\n```json\n{baseinfo_text}\n```\n\n"
-            f"`{ddl_name}.ddls.xml`\n\n```xml\n{xml_text}```"
+            f"`{ddl_name}.ddls.xml`\n\n```xml\n{xml_text}```\n\n"
+            f"`{ddl_name}.parameters`\n\n```json\n{parameters_text}\n```"
         )
 
     out["messages"] = [AIMessage(content=review_message)]

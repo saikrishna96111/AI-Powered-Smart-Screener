@@ -19,6 +19,15 @@ state = {
     "session_ended": False,
     "cds_code": None,
     "summary_human_count": 0,
+    "cds_syntax_status": None,
+    "cds_syntax_issues": [],
+    "cds_syntax_retries": 0,
+    "cds_syntax_review_done": False,
+    # CDS view parameter collection (date_parameter mandatory, additional optional).
+    "params_phase": None,
+    "cds_parameter_inputs": {},
+    "cds_parameters": [],
+    "parameters_collection_done": False,
 }
 
 print("Rule Architect Agent Started\n")

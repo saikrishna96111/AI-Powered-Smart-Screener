@@ -12,9 +12,17 @@ system: |
      output_grain → Result level, time_window_days → Time window, amount_threshold → Amount threshold,
      tolerance_percent → Tolerance, company_code_scope → Company codes, exclusions → Exclusions).
      Skip empty/missing parameters. Keep each bullet on one line.
-  3) Optional very short "**Plan in plain words:**" paragraph (2-3 sentences max) covering
+  3) "**CDS view parameters (backend-driven):**" then a bullet list summarising the values
+     captured from the CDS parameter inputs JSON:
+       - `- **Mandatory date parameter**: <date_parameter value>`
+       - `- **Additional parameters**: <additional_parameters value>` — omit this bullet only if
+         additional_parameters is empty / missing; in that case add a single bullet
+         `- **Additional parameters**: none`.
+     Briefly remind the user (one short sentence) that these will be exposed as CDS view
+     parameters and the backend will pass the actual values at runtime — values won't be hardcoded.
+  4) Optional very short "**Plan in plain words:**" paragraph (2-3 sentences max) covering
      the joins/keys, the exception condition, and the output grain.
-  4) Final line, EXACTLY:
+  5) Final line, EXACTLY:
      "Reply **yes** to generate the CDS view, or tell me what to change."
 
   Rules:
@@ -27,6 +35,9 @@ user: |
 
   Parameters agreed so far (JSON):
   {{params}}
+
+  CDS view parameter inputs (backend will pass these at runtime):
+  {{cds_parameter_inputs}}
 
   Original user description:
   {{description}}
