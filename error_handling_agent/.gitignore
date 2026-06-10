@@ -1,0 +1,15 @@
+# RAG / vector store
+vector_store/
+data/INDEX_MANIFEST.json
+
+# Don't commit the local copies of the source PDFs (they live in Downloads / Drive)
+data/sources/*.pdf
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv*/
+
+# Local secrets
+.env

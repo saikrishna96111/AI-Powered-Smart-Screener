@@ -28,6 +28,9 @@ state = {
     "cds_parameter_inputs": {},
     "cds_parameters": [],
     "parameters_collection_done": False,
+    # RAG retrieval (populated by retrieve_examples_node right before cds_node).
+    "reference_examples_text": None,
+    "reference_examples_meta": [],
 }
 
 print("Rule Architect Agent Started\n")

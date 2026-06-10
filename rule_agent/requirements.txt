@@ -5,3 +5,10 @@ langchain_openai
 langchain-anthropic
 pyyaml
 python-dotenv
+
+# Retrieval against the shared Chroma store built by error_handling_agent/scripts/build_index.py.
+# Same packages as error_handling_agent — the two agents share the on-disk vector store.
+langchain-chroma
+langchain-huggingface
+chromadb
+sentence-transformers

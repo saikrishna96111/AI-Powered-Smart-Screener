@@ -37,15 +37,32 @@ system: |
   - GROUP BY on a derived/aliased column (must use the source field).
   - Use of `ROW_NUMBER`, window functions, or WITH-clause Common Table Expressions
     (CTEs introduced with `with <name> as ( select ... )`) — not supported in classic CDS.
-    NOTE: `with parameters ( p_xxx : type, ... )` placed between `define view entity ZC_...`
+    NOTE: `with parameters ( p_xxx : type, ... )` placed between `define view ZAI_...`
     and `as select from ...` is the supported view-parameter syntax and MUST be accepted.
     Only flag a `WITH` that introduces a SELECT/CTE subquery.
 
-  Also FAIL on:
-  - Missing the two mandatory annotations at the top, in this exact order:
-    `@OData.publish: true` then `@AccessControl.authorizationCheck: #NOT_REQUIRED`.
-  - DDL view name OR `@AbapCatalog.sqlViewName` not starting with the literal `ZC_`
-    prefix (Z + C + underscore).
+  Also FAIL on (S/4HANA 2025 hard guardrails):
+  - Missing the mandatory top annotations including:
+    `@AccessControl.authorizationCheck: #NOT_REQUIRED`, `@OData.publish: true`
+    placed ABOVE the `define view` line.
+  - Use of `@AbapCatalog.preserveKey` — DEPRECATED, must be removed.
+  - DDL view name not starting with the literal `ZAI_` prefix OR longer than
+    20 characters (including the `ZAI_` prefix).
+  - Use of `define view entity` — on this on-prem 2025 stack we use classic
+    `define view <NAME>`.
+  - Any reference to `mandt` anywhere (JOIN ON or WHERE).
+  - Use of the `IN` operator — must be rewritten as explicit `OR` chain.
+  - Aggregate functions inside `CASE WHEN` (e.g. `CASE WHEN count(*) > 1`).
+  - `dats_days_between(...)` used in WHERE (only allowed in SELECT).
+  - `dats_add_days(...)` called with anything other than EXACTLY 3 arguments.
+  - Function calls on the LEFT-hand side of a WHERE comparison
+    (functions allowed only on the RIGHT-hand side).
+  - Parameters typed with raw built-ins (`abap.dats`, `abap.int4`,
+    `abap.dec(...)`) instead of named SAP data elements
+    (`budat`, `int4`, `netwr_ap`, `bukrs`, `lifnr`, ...).
+  - `lifnr` or `wrbtr` sourced from `bkpf` (they must come from `bseg`).
+  - CDHDR header field referenced as `objectcl` or `objectclass`
+    (the correct field is `objectclas`).
 
   Safety rule when uncertain:
   - If you are NOT sure a construct is supported in ABAP CDS DDL, REWRITE to the

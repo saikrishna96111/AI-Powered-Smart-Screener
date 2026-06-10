@@ -27,11 +27,16 @@ def fix_cds_node(state: dict) -> dict:
             ],
         }
 
+    references_text = (state.get("references_text") or "").strip()
+    if not references_text:
+        references_text = "(no reference excerpts retrieved)"
+
     data = load_prompt("fix")
     user_block = (
         data["user"]
         .replace("{{cds_source}}", cds)
         .replace("{{error_text}}", err)
+        .replace("{{references}}", references_text)
     )
 
     resp = get_llm().invoke(

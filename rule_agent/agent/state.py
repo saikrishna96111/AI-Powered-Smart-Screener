@@ -55,3 +55,8 @@ class AgentState(TypedDict, total=False):
     cds_syntax_issues: List[str]
     cds_syntax_retries: int            # number of fix attempts actually made
     cds_syntax_review_done: bool
+    # Reference examples + supporting excerpts retrieved from the shared Chroma
+    # store (built by error_handling_agent/scripts/build_index.py). Populated
+    # by retrieve_examples_node right before cds_node.
+    reference_examples_text: Optional[str]
+    reference_examples_meta: List[Dict[str, str]]

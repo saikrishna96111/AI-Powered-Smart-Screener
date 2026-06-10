@@ -5,13 +5,16 @@ system: |
   Review the DDL against this checklist. Be specific and cite line-level patterns when helpful.
 
   Checklist:
-  0) Mandatory annotations — The final CDS must start with these two annotations at the very top,
-     in this exact order:
-     @OData.publish: true
+  0) Mandatory annotations — The final CDS must include these annotations near the top
+     (before `define view`):
      @AccessControl.authorizationCheck: #NOT_REQUIRED
-  0b) View naming — The DDL identifier after define view / define view entity MUST begin with the
-      literal prefix **ZC_** (not ZCD..., not ZC without underscore). The @AbapCatalog.sqlViewName
-      quoted value MUST begin with **ZC_** as well. If either violates this, fix in revised DDL.
+     @OData.publish: true
+     Also REJECT any use of `@AbapCatalog.preserveKey` (deprecated in S/4HANA 2025).
+  0b) View naming — The DDL identifier after `define view` MUST begin with the literal
+      prefix **ZAI_** and be at most **20 characters** total. The @AbapCatalog.sqlViewName
+      quoted value MUST begin with **ZV_** and be at most 16 characters. If either
+      violates this, fix in revised DDL. The on-prem 2025 stack uses classic
+      `define view <NAME>` (NOT `define view entity`).
   1) Duplicate logic — Avoid expressing the same rule twice (e.g. identical NOT EXISTS in both
      SELECT/CASE and WHERE, or mirrored subqueries). Prefer one place, or split into composed views.
   2) Portability — Flag unexplained client-specific literals (Z-tables, Z-fields, uncommon KTOKK,
@@ -32,9 +35,9 @@ system: |
     followed by a single ```abap fenced block with the FULL corrected view (complete, pasteable).
     Ensure the revised CDS still starts with the two mandatory top annotations in the exact order above.
   - If only [info] or no material issues, omit "Revised CDS" or state "No DDL revision needed."
-  - Keep the revised view syntactically consistent with the original style. Preserve names when both
-    already use the **ZC_** prefix correctly; otherwise rename so DDL identifier and sqlViewName each
-    start with **ZC_**.
+  - Keep the revised view syntactically consistent with the original style. Preserve names when the
+    view name already follows the **ZAI_** (<=20 chars) convention and the sqlViewName follows the
+    **ZV_** (<=16 chars) convention; otherwise rename accordingly.
 
 user: |
   Control intent: {{intent}}

@@ -1,0 +1,68 @@
+// CDS GENERATION HARD RULES (S/4HANA 2025) — gold guardrails
+// Source: inputs.docx
+// These rules are also embedded verbatim in rule_agent/agent/prompts/cds.yaml
+// so the rule-agent ALWAYS sees them; they are indexed here so the
+// error-handling agent can also retrieve them when diagnosing failures.
+// ----------------------------------------------------------------------------
+
+GENERAL SYNTAX
+- Use AND / OR / NOT (uppercase keywords) in WHERE clauses.
+- All generated artefact file names must be lowercase
+  (e.g. zai_dupl_inv1.ddls, zai_dupl_inv1.xml, zai_dupl_inv1.baseinfo).
+
+DEPRECATED / FORBIDDEN ANNOTATIONS
+- @AbapCatalog.preserveKey is deprecated in S/4HANA 2025 — REMOVE it.
+- Always add @AccessControl.authorizationCheck: #NOT_REQUIRED.
+- @OData.publish: true must appear directly ABOVE the `define view` line
+  (not inside annotation groups, not later in the file).
+
+NAMING
+- CDS view name length must be <= 20 characters.
+- Naming convention: ZAI_<short purpose> (e.g. ZAI_DUPL_INV1, ZAI_PO_CR_APP).
+
+PARAMETERS
+- Parameters MUST use NAMED SAP data elements: int4, budat, bukrs,
+  netwr_ap, dats, char1, etc. NEVER use raw built-ins like abap.dats,
+  abap.int4, abap.dec in parameter declarations.
+- A mandatory date-range parameter (from/to of type budat) is always used
+  to define the time window — do NOT compute lookbacks with
+  add_days($session.system_date, -N) or any hardcoded N-day arithmetic.
+- Reference parameter values as $parameters.p_<name>.
+
+JOIN AND WHERE
+- NEVER reference mandt (client field) in any JOIN ON condition or
+  WHERE clause. The CDS framework handles client implicitly.
+- The IN operator is NOT supported — replace `field IN ('A','B','C')`
+  with explicit OR: `(field = 'A' OR field = 'B' OR field = 'C')`.
+- No inline sub-queries inside JOIN ON clauses.
+- No function calls on the LEFT-hand side of WHERE comparisons.
+  Functions may only appear on the RIGHT-hand side
+  (e.g. `col >= dats_add_days(:p_to, -:p_days, 'INITIAL')`).
+- dats_days_between() is allowed ONLY in the SELECT list,
+  NEVER inside WHERE. Filter equivalents with dats_add_days() instead.
+- dats_add_days() requires EXACTLY 3 arguments
+  (date, days_delta, on_error). on_error is usually 'INITIAL'.
+
+FIELD SOURCING
+- lifnr and wrbtr must be sourced from bseg, NOT from bkpf.
+- koart = 'K' restricts to vendor (Kreditor) line items only.
+- xblnr is the external invoice number on bkpf.
+- stblg = '' excludes reversed documents.
+
+AGGREGATION
+- COUNT(*) only — do NOT use COUNT(field).
+- NO aggregate functions inside CASE WHEN. Specifically:
+  CASE WHEN count(*) > 1 ... END is INVALID in CDS.
+- For criticality / traffic-light fields, use a `cast(<N> as abap.int1)`
+  literal and let the consumption / UI layer compute thresholds.
+  Example: `cast( 3 as abap.int1 ) as RiskCriticality`.
+- All non-aggregated fields in the SELECT list must appear in GROUP BY
+  when any aggregate (count(*), sum, min, max, ...) is present.
+
+CHANGE-DOCUMENT TABLE FIELDS (CDHDR / CDPOS)
+- CDHDR.objectclas (not objectcl, not objectclass).
+  Examples: 'EINKBELEG' for purchasing docs, 'KRED' for vendor master.
+- CDPOS.tabname + CDPOS.fname identify the specific field that changed
+  (e.g. tabname='EKKO', fname='FRGZU' for PO release-status changes;
+  tabname='LFBK', fname='BANKN' for vendor bank-account changes).
+- Join CDPOS to CDHDR on `changenr` only.

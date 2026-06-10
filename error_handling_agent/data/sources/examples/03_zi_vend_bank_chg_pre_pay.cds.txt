@@ -1,0 +1,256 @@
+// EXAMPLE: ZI_VEND_BANK_CHG_PRE_PAY
+// Source: working_code.docx
+// This is a SYNTACTICALLY CORRECT, working CDS view. Treat as gold reference.
+// ----------------------------------------------------------------------------
+
+Vendor bank changes and payment execution
+/*
+=============================================================
+  CDS VIEW   : ZI_VEND_BANK_CHG_PRE_PAY
+  SQL VIEW   : ZV_VB_CHG_PAY
+  Description: Detect Vendor Bank Account Changes made
+               within N days before payment execution.
+               Flags potential fraud / BEC scenarios where
+               bank details were changed shortly before
+               a payment run was processed.
+  Parameter  : p_days_threshold — number of days between
+               bank account change and payment posting date
+  System     : S/4HANA 2025 On-Premise
+  OData V2   : Auto-published via @OData.publish: true
+               Service: ZI_VEND_BANK_CHG_PRE_PAY_CDS
+               Register: /IWFND/MAINT_SERVICE → Alias: Local
+  OData V4   : ZSD_VEND_BANK_CHG_PAY
+               ZSB_VEND_BNK_PAY_UI / ZSB_VEND_BNK_PAY_API
+=============================================================
+  TABLE DESIGN
+  ------------
+  BSEG         — FI Document Line Items
+                 lifnr  = vendor number (from bseg, not bkpf)
+                 wrbtr  = payment amount (from bseg, not bkpf)
+                 koart  = 'K' (vendor/Kreditor line items)
+  BKPF         — FI Document Header
+                 blart  = payment doc types (ZP / KZ / ZZ)
+                 stblg  = '' (exclude reversals)
+                 budat  = payment posting date
+  CDHDR        — Change Document Header
+                 objectclas = 'KRED' (vendor master)
+                 objectid   = vendor number (lifnr)
+                 username   = who changed the bank account
+                 udate      = date of bank change
+  CDPOS        — Change Document Items
+                 tabname = 'LFBK' (vendor bank account table)
+                 fname   = 'BANKN' (bank account number field)
+  LFA1         — Vendor Master (vendor name)
+  LFBK         — Current vendor bank account details
+  T001         — Company Code description
+=============================================================
+  GUARDRAILS — S/4HANA 2025
+  --------------------------
+  1.  @AbapCatalog.preserveKey removed — deprecated in 2025
+  2.  @AccessControl.authorizationCheck: #NOT_REQUIRED
+  3.  Parameter uses named data element 'int4' — OData safe
+  4.  @OData.publish: true placed directly above define view
+  5.  No COUNT — no aggregation needed in this view
+  6.  No aggregate inside CASE WHEN
+  7.  No inline subquery in JOIN
+  8.  No mandt in any JOIN or WHERE — implicit in CDS
+  9.  No IN operator — explicit OR for payment doc types
+  10. No function used as operator in WHERE clause
+  11. dats_add_days( date, days, 'INITIAL' ) — 3 params,
+      used on RHS only — never as LHS operator in WHERE
+  12. dats_days_between used in SELECT list only — not WHERE
+  13. CDHDR field: objectclas (verified — not objectcl
+      or objectclass)
+  14. lifnr and wrbtr sourced from bseg (not bkpf)
+  15. koart = 'K' restricts to vendor line items only
+  16. Criticality as cast literal — not CASE on aggregate
+  17. No GROUP BY — no aggregation in this view
+=============================================================
+*/
+
+@AbapCatalog.sqlViewName: 'ZV_VB_CHG_PAY'
+@AbapCatalog.compiler.compareFilter: true
+@AccessControl.authorizationCheck: #NOT_REQUIRED
+@EndUserText.label: 'Vendor Bank Change Before Payment'
+@VDM.viewType: #CONSUMPTION
+
+@UI.headerInfo: {
+    typeName:       'Vendor Bank Change Before Payment',
+    typeNamePlural: 'Vendor Bank Changes Before Payment',
+    title:          { type: #STANDARD, value: 'Vendor' },
+    description:    { type: #STANDARD, value: 'VendorName' }
+}
+
+// OData V2 auto-publish
+// Generates service: ZI_VEND_BANK_CHG_PRE_PAY_CDS
+// Register: SAP GUI → /IWFND/MAINT_SERVICE → Add Service → Alias: LOCAL
+@OData.publish: true
+
+define view ZI_VEND_BANK_CHG_PRE_PAY
+  with parameters
+    // int4 — standard SAP data element, type INT4, OData compatible
+    // Payments where bank account was changed within this many
+    // days before the payment posting date will be flagged
+    @EndUserText.label: 'Days Threshold (Bank Change to Payment)'
+    @Consumption.defaultValue: '30'
+    p_days_threshold : int4
+
+  as select from bseg as PayItem
+
+  // BKPF — Payment document header
+  // No mandt — handled implicitly by CDS framework
+  inner join bkpf as PayHeader
+    on  PayItem.bukrs = PayHeader.bukrs
+    and PayItem.belnr = PayHeader.belnr
+    and PayItem.gjahr = PayHeader.gjahr
+
+  // CDHDR — Vendor master change document header
+  // objectclas = 'KRED' for vendor master (verified SAP DD)
+  // objectid   = vendor number (lifnr from bseg)
+  // username   = person who changed the bank account
+  inner join cdhdr as ChgHdr
+    on  ChgHdr.objectid   = PayItem.lifnr
+    and ChgHdr.objectclas = 'KRED'
+
+  // CDPOS — Change document items
+  // tabname = 'LFBK' : vendor bank account table
+  // fname   = 'BANKN': bank account number field
+  inner join cdpos as ChgPos
+    on  ChgPos.changenr = ChgHdr.changenr
+    and ChgPos.tabname  = 'LFBK'
+    and ChgPos.fname    = 'BANKN'
+
+  // LFA1 — Vendor name
+  left outer join lfa1 as Vendor
+    on  Vendor.lifnr = PayItem.lifnr
+
+  // LFBK — Current vendor bank account on master data
+  left outer join lfbk as VendorBank
+    on  VendorBank.lifnr = PayItem.lifnr
+
+  // T001 — Company Code description
+  left outer join t001 as CompCode
+    on  CompCode.bukrs = PayHeader.bukrs
+
+{
+    //-- Keys ---------------------------------------------------
+    @UI.lineItem:       [{ position: 10, label: 'Company Code' }]
+    @UI.selectionField: [{ position: 10 }]
+    @ObjectModel.text.element: ['CompanyCodeName']
+    key PayHeader.bukrs          as CompanyCode,
+
+    @UI.lineItem: [{ position: 20, label: 'Payment Doc No.' }]
+    key PayHeader.belnr          as PaymentDocNumber,
+
+    @UI.lineItem:       [{ position: 30, label: 'Fiscal Year' }]
+    @UI.selectionField: [{ position: 20 }]
+    key PayHeader.gjahr          as FiscalYear,
+
+    key PayItem.buzei            as LineItem,
+
+    key ChgHdr.changenr          as ChangeDocNumber,
+
+    //-- Vendor Fields ------------------------------------------
+    @UI.lineItem:       [{ position: 40, label: 'Vendor' }]
+    @UI.selectionField: [{ position: 30 }]
+    @ObjectModel.text.element: ['VendorName']
+    PayItem.lifnr                as Vendor,
+
+    @UI.hidden: true
+    Vendor.name1                 as VendorName,
+
+    @UI.hidden: true
+    CompCode.butxt               as CompanyCodeName,
+
+    //-- Payment Fields -----------------------------------------
+    @UI.lineItem: [{ position: 50, label: 'Payment Doc Type' }]
+    PayHeader.blart              as PaymentDocType,
+
+    @UI.lineItem:       [{ position: 60, label: 'Payment Posting Date' }]
+    @UI.selectionField: [{ position: 40 }]
+    PayHeader.budat              as PaymentPostingDate,
+
+    @Semantics.amount.currencyCode: 'PaymentCurrency'
+    @UI.lineItem: [{ position: 70, label: 'Payment Amount' }]
+    PayItem.wrbtr                as PaymentAmount,
+
+    @UI.lineItem: [{ position: 80, label: 'Currency' }]
+    PayHeader.waers              as PaymentCurrency,
+
+    PayHeader.usnam              as PostedBy,
+    PayHeader.cpudt              as PaymentEntryDate,
+
+    //-- Bank Change Fields -------------------------------------
+    @UI.lineItem: [{ position: 90, label: 'Bank Change Date' }]
+    ChgHdr.udate                 as BankChangeDate,
+
+    @UI.lineItem: [{ position: 100, label: 'Changed By' }]
+    ChgHdr.username              as BankChangedBy,
+
+    @UI.lineItem: [{ position: 110, label: 'Old Bank Account' }]
+    ChgPos.value_old             as OldBankAccount,
+
+    @UI.lineItem: [{ position: 120, label: 'New Bank Account' }]
+    ChgPos.value_new             as NewBankAccount,
+
+    @UI.lineItem: [{ position: 130, label: 'Current Bank Account' }]
+    VendorBank.bankn             as CurrentBankAccount,
+
+    VendorBank.banks             as BankCountry,
+    VendorBank.bankl             as BankKey,
+
+    //-- Days Between Bank Change and Payment -------------------
+    // dats_days_between valid in SELECT list ONLY — not in WHERE
+    // Positive value = bank changed before payment (risk)
+    @UI.lineItem: [{
+        position:    140,
+        label:       'Days: Change to Payment',
+        criticality: 'RiskCriticality'
+    }]
+    dats_days_between(
+        ChgHdr.udate,
+        PayHeader.budat
+    )                            as DaysBetweenChangeAndPayment,
+
+    // Expose parameter value for traceability in OData response
+    $parameters.p_days_threshold as DaysThreshold,
+
+    //-- Risk Criticality ---------------------------------------
+    // 3 = Red — all records returned are confirmed risk cases
+    // No CASE WHEN on aggregate — cast literal used (guardrail)
+    @UI.hidden: true
+    cast( 3 as abap.int1 )      as RiskCriticality,
+
+    //-- Line Item Fields ---------------------------------------
+    PayItem.hkont                as GLAccount,
+    PayItem.kostl                as CostCenter,
+    PayItem.aufnr                as OrderNumber,
+    PayItem.zuonr                as AssignmentNumber,
+    PayItem.sgtxt                as ItemText
+}
+where
+  // Payment document types — IN not supported in S/4HANA 2025 CDS
+  // Explicit OR used instead
+      ( PayHeader.blart = 'ZP'     -- Outgoing payment (automatic)
+     or PayHeader.blart = 'KZ'     -- Vendor payment
+     or PayHeader.blart = 'ZZ' )   -- Manual outgoing payment
+
+  // Vendor line items only — koart and lifnr live in bseg
+  and PayItem.koart   =  'K'
+  and PayItem.lifnr   <> ''
+
+  // Exclude reversed payment documents
+  and PayHeader.stblg =  ''
+
+  // Bank change must be strictly before the payment date
+  and ChgHdr.udate    <  PayHeader.budat
+
+  // Threshold condition:
+  // dats_add_days( date, days, on_error ) — 3 params mandatory
+  // on_error = 'INITIAL' returns 00000000 on invalid result
+  // Negative days subtracts from budat to get earliest change date
+  // Plain column (udate) compared to function on RHS only — valid
+  and ChgHdr.udate    >= dats_add_days(
+                             PayHeader.budat,
+                             -( $parameters.p_days_threshold ),
+                             'INITIAL' )

@@ -1,0 +1,71 @@
+# Crawler config for the RAG index. Used by scripts/build_index.py.
+#
+# Tweak these values without touching code to widen / narrow the crawl.
+# After changing, re-run:  python scripts/build_index.py
+#
+# Two crawl modes:
+#   1) Static HTTP   (seeds + allow_prefixes)   -> RecursiveUrlLoader
+#   2) JS-rendered   (js_seeds + js_allow_prefixes) -> Playwright + Chromium
+#
+# Use the JS mode for pages that only render content client-side (Vue / React
+# SPAs such as the SAP Help portal). Plain HTTP returns a ~1 KB shell for
+# those URLs so the static crawler can't see any links.
+
+# ---------------------------------------------------------------------------
+# Static-HTML crawl (community.sap.com)
+# ---------------------------------------------------------------------------
+
+max_depth: 1          # follow up to N hops from each seed (community blog: 1 is enough)
+max_pages: 30         # hard cap on the total number of pages stored
+request_timeout: 30   # per-page timeout in seconds
+
+# Browser User-Agent sent on every request — required for community.sap.com
+# (its default response is a 403 to python-requests UAs). The same UA is used
+# by the JS crawler.
+user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+# Only URLs whose value STARTS WITH one of these prefixes are kept.
+allow_prefixes:
+  - https://community.sap.com/t5/technology-blog-posts-by-sap/
+
+# If any of these substrings appears in the URL, the page is dropped.
+deny_substrings:
+  - /search
+  - /login
+  - /tags
+  - /comments
+  - /print
+  - /redirect
+  - utm_source=
+  - utm_campaign=
+
+# Seed URLs for the static crawler.
+seeds:
+  - https://community.sap.com/t5/technology-blog-posts-by-sap/abap-cds-annotation-documentation-available-in-the-sap-help-portal/ba-p/13584536
+
+# ---------------------------------------------------------------------------
+# JS-rendered crawl (SAP Help portal — Vue SPA)
+# ---------------------------------------------------------------------------
+# We render each page with headless Chromium, extract text from the main
+# content area, and follow same-product links breadth-first. From the four
+# seed URLs below we'll pick up the full View Entities sub-tree, all sibling
+# topics (Table Entities, Projection Views, Functions, External Entities,
+# ...), and the ABAP CDS syntax reference.
+
+js_max_depth: 3
+js_max_pages: 250
+js_settle_ms: 1500    # ms to wait after the content selector appears
+js_min_chars: 250     # drop pages that rendered less than this much text
+
+js_allow_prefixes:
+  - https://help.sap.com/doc/abapdocu_latest_index_htm/
+  - https://help.sap.com/doc/abapdocu_cp_index_htm/
+  - https://help.sap.com/docs/abap-cloud/abap-data-models/
+
+js_seeds:
+  # ABAP Keyword Documentation (CDS syntax reference + general rules)
+  - https://help.sap.com/doc/abapdocu_latest_index_htm/latest/en-US/ABENCDS_SYNTAX.html
+  - https://help.sap.com/doc/abapdocu_cp_index_htm/CLOUD/en-US/ABENCDS_GENERAL_SYNTAX_RULES.html
+  # ABAP Cloud — ABAP Data Models (View Entities tree + Functions + siblings)
+  - https://help.sap.com/docs/abap-cloud/abap-data-models/cds-view-entities-8b3e8e8b8797432abecd7d1fbb6d5c12
+  - https://help.sap.com/docs/abap-cloud/abap-data-models/functions-in-abap-cds

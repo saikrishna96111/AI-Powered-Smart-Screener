@@ -4,3 +4,19 @@ langchain_openai
 langchain-anthropic
 pyyaml
 python-dotenv
+
+# RAG stack (local embeddings + persistent Chroma vector store)
+langchain-community
+langchain-text-splitters
+langchain-huggingface
+langchain-chroma
+chromadb
+sentence-transformers
+pymupdf
+beautifulsoup4
+lxml
+
+# Headless browser used to render the SAP Help portal SPA pages so we can
+# follow the left-navigation tree and capture sibling/child topics. After
+# `pip install`, also run once:  playwright install chromium
+playwright

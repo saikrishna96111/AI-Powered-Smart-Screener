@@ -12,6 +12,7 @@ from .nodes import (
     parameters_node,
     explain_node,
     approval_node,
+    retrieve_examples_node,
     cds_node,
     syntax_review_node,
     cds_review_node,
@@ -35,6 +36,7 @@ def build_graph():
     workflow.add_node("parameters", parameters_node)
     workflow.add_node("explain", explain_node)
     workflow.add_node("approval", approval_node)
+    workflow.add_node("retrieve_examples", retrieve_examples_node)
     workflow.add_node("cds", cds_node)
     workflow.add_node("syntax_review", syntax_review_node)
     workflow.add_node("cds_review", cds_review_node)
@@ -98,11 +100,14 @@ def build_graph():
 
     workflow.add_edge("explain", "approval")
 
-    # Only generate CDS when approved and not already delivered
+    # Only generate CDS when approved and not already delivered. We first
+    # hop through retrieve_examples to pull the closest gold CDS view(s) from
+    # the shared Chroma store so cds_node has a working template to mirror.
     workflow.add_conditional_edges(
         "approval",
-        lambda state: "cds" if (state.get("approved") and not state.get("cds_delivered")) else END
+        lambda state: "retrieve_examples" if (state.get("approved") and not state.get("cds_delivered")) else END
     )
+    workflow.add_edge("retrieve_examples", "cds")
 
     # Syntax-correctness comes BEFORE the engineering/perf review so cds_review
     # always operates on a CDS that already activates in ADT.

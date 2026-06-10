@@ -1,0 +1,231 @@
+// EXAMPLE: ZAI_PO_CREATOR_APPR
+// Source: working_code.docx
+// This is a SYNTACTICALLY CORRECT, working CDS view. Treat as gold reference.
+// ----------------------------------------------------------------------------
+
+PO Creator and Approver are the same
+/*
+=============================================================
+  CDS VIEW   : ZI_PO_CREATOR_APPROVER_SAME
+  SQL VIEW   : ZV_PO_CR_APP
+  Description: Identify POs where Creator and Approver are
+               the same person — SoD violation detection.
+               Uses CDHDR/CDPOS (Release Strategy via ME29N/
+               ME28) to identify who approved the PO.
+               SWW_WI2OBJ / SWWWIHEAD NOT used — system uses
+               Release Strategy, not SAP Workflow for PO.
+  Parameter  : p_po_value — minimum PO net value to flag
+  System     : S/4HANA 2025 On-Premise
+  OData V2   : Auto-published via @OData.publish: true
+               Service: ZI_PO_CREATOR_APPROVER_SAME_CDS
+               Register: /IWFND/MAINT_SERVICE → Alias: Local
+  OData V4   : ZSD_PO_CREATOR_APPROVER
+               ZSB_PO_CR_APP_UI / ZSB_PO_CR_APP_API
+=============================================================
+  TABLE DESIGN — RELEASE STRATEGY APPROACH
+  -----------------------------------------
+  EKKO.ernam     = PO Creator
+  EKKO.frgke     = Release Indicator (blank = not released,
+                   populated = released)
+  EKKO.frgzu     = Release Status (e.g. 'X' = fully released)
+  EKKO.frggr     = Release Group
+  EKKO.frgrl     = Release Strategy
+
+  CDHDR          = Change Document Header
+    objectid     = PO number (ebeln)
+    objectclas   = 'EINKBELEG' (Purchasing Document)
+    tcode        = 'ME29N' or 'ME28' (release transactions)
+    username     = who released (approver)
+
+  CDPOS          = Change Document Items
+    tabname      = 'EKKO'
+    fname        = 'FRGZU'  (release status field changed)
+    value_new    contains 'X' = release code applied
+=============================================================
+  GUARDRAILS — S/4HANA 2025
+  --------------------------
+  1.  @AbapCatalog.preserveKey removed — deprecated in 2025
+  2.  Named data element netwr_ap for PO value parameter
+  3.  @OData.publish: true above define view
+  4.  No aggregation — no GROUP BY needed
+  5.  No aggregate inside CASE WHEN
+  6.  No inline subquery in JOIN
+  7.  No mandt in any JOIN or WHERE
+  8.  No IN operator — explicit OR for tcode filter
+  9.  No function in WHERE clause
+  10. Criticality as cast literal
+  11. objectclas = 'EINKBELEG' — correct for PO change docs
+  12. CDHDR field: objectclas (not objectcl / objectclass)
+=============================================================
+*/
+
+@AbapCatalog.sqlViewName: 'ZV_PO_CR_APP1'
+@AbapCatalog.compiler.compareFilter: true
+@AccessControl.authorizationCheck: #NOT_REQUIRED
+@EndUserText.label: 'PO Creator and Approver Same Person'
+@VDM.viewType: #CONSUMPTION
+
+@UI.headerInfo: {
+    typeName:       'SoD Violation - PO',
+    typeNamePlural: 'SoD Violations - POs',
+    title:          { type: #STANDARD, value: 'PurchaseOrder' },
+    description:    { type: #STANDARD, value: 'VendorName' }
+}
+
+@OData.publish: true
+
+define view ZAI_PO_CREATOR_APPR
+  with parameters
+    @EndUserText.label: 'Minimum PO Value'
+    @Consumption.defaultValue: '10000'
+    p_po_value : netwr_ap
+
+  as select from ekko as POHeader
+
+  // EKPO — PO line items for net value and material info
+  inner join ekpo as POItem
+    on  POItem.ebeln = POHeader.ebeln
+
+  // CDHDR — Change document header for PO release
+  // objectclas = 'EINKBELEG' for purchasing documents
+  // tcode ME29N = individual release, ME28 = list release
+  // username = the person who performed the release (approver)
+  inner join cdhdr as RelHdr
+    on  RelHdr.objectid   = POHeader.ebeln
+    and RelHdr.objectclas = 'EINKBELEG'
+    and ( RelHdr.tcode    = 'ME29N'
+       or RelHdr.tcode    = 'ME28' )
+
+  // CDPOS — Change document items
+  // tabname = 'EKKO' and fname = 'FRGZU' confirms this change
+  // is specifically the release status field being updated
+  inner join cdpos as RelPos
+    on  RelPos.changenr = RelHdr.changenr
+    and RelPos.tabname  = 'EKKO'
+    and RelPos.fname    = 'FRGZU'
+
+  // T024 — Purchasing Group description
+  left outer join t024 as PurchGroup
+    on  PurchGroup.ekgrp = POHeader.ekgrp
+
+  // LFA1 — Vendor name
+  left outer join lfa1 as Vendor
+    on  Vendor.lifnr     = POHeader.lifnr
+
+{
+    //-- Keys ---------------------------------------------------
+    @UI.lineItem:       [{ position: 10, label: 'Purchase Order' }]
+    @UI.selectionField: [{ position: 10 }]
+    key POHeader.ebeln          as PurchaseOrder,
+
+    key POItem.ebelp            as POLineItem,
+
+    key RelHdr.changenr         as ChangeDocNumber,
+
+    //-- PO Header Fields ---------------------------------------
+    @UI.lineItem: [{ position: 20, label: 'PO Type' }]
+    POHeader.bsart              as PODocumentType,
+
+    @UI.lineItem:       [{ position: 30, label: 'Company Code' }]
+    @UI.selectionField: [{ position: 20 }]
+    POHeader.bukrs              as CompanyCode,
+
+    @UI.lineItem: [{ position: 40, label: 'Purchasing Org' }]
+    POHeader.ekorg              as PurchasingOrg,
+
+    @UI.lineItem: [{ position: 50, label: 'Purchasing Group' }]
+    POHeader.ekgrp              as PurchasingGroup,
+
+    @UI.hidden: true
+    PurchGroup.eknam            as PurchasingGroupName,
+
+    @UI.lineItem:       [{ position: 60, label: 'Vendor' }]
+    @UI.selectionField: [{ position: 30 }]
+    @ObjectModel.text.element:  ['VendorName']
+    POHeader.lifnr              as Vendor,
+
+    @UI.hidden: true
+    Vendor.name1                as VendorName,
+
+    @UI.lineItem:       [{ position: 70, label: 'PO Date' }]
+    @UI.selectionField: [{ position: 40 }]
+    POHeader.bedat              as PODate,
+
+    @UI.lineItem: [{ position: 80, label: 'Currency' }]
+    POHeader.waers              as Currency,
+
+    // Release Strategy fields from EKKO
+    POHeader.frggr              as ReleaseGroup,
+    POHeader.frgrl              as ReleaseStrategy,
+    POHeader.frgke              as ReleaseIndicator,
+    POHeader.frgzu              as ReleaseStatus,
+
+    //-- Creator (EKKO.ernam) -----------------------------------
+    @UI.lineItem: [{
+        position:    90,
+        label:       'Created By',
+        criticality: 'SoDCriticality'
+    }]
+    POHeader.ernam              as CreatedBy,
+
+    POHeader.aedat              as LastChangedDate,
+
+    //-- Approver (CDHDR.username — who released via ME29N/ME28)
+    @UI.lineItem: [{
+        position:    100,
+        label:       'Released By',
+        criticality: 'SoDCriticality'
+    }]
+    RelHdr.username             as ReleasedBy,
+
+    // Date and time of release
+    @UI.lineItem: [{ position: 110, label: 'Release Date' }]
+    RelHdr.udate                as ReleaseDate,
+
+    RelHdr.utime                as ReleaseTime,
+    RelHdr.tcode                as ReleaseTCode,
+
+    // Old and new release status values
+    RelPos.value_old            as ReleaseStatusBefore,
+    RelPos.value_new            as ReleaseStatusAfter,
+
+    //-- SoD Criticality ----------------------------------------
+    // 3 = Red — all returned records are confirmed SoD violations
+    @UI.hidden: true
+    cast( 3 as abap.int1 )     as SoDCriticality,
+
+    //-- PO Item Fields -----------------------------------------
+    @Semantics.amount.currencyCode: 'Currency'
+    @UI.lineItem: [{ position: 120, label: 'Net Value' }]
+    POItem.netwr                as NetValue,
+
+    @UI.lineItem: [{ position: 130, label: 'Material' }]
+    POItem.matnr                as Material,
+
+    @UI.lineItem: [{ position: 140, label: 'Short Text' }]
+    POItem.txz01                as MaterialDescription,
+
+    POItem.menge                as Quantity,
+    POItem.meins                as UnitOfMeasure,
+    POItem.werks                as Plant,
+    POItem.matkl                as MaterialGroup
+}
+where
+  // Core SoD violation: PO creator = person who released it
+      POHeader.ernam  =  RelHdr.username
+
+  // Only fully released POs — frgke populated means released
+  and POHeader.frgke  <> ''
+
+  // Standard PO types — explicit OR, no IN operator
+  and ( POHeader.bsart = 'NB'
+     or POHeader.bsart = 'ZNB'
+     or POHeader.bsart = 'ZNBX' )
+
+  // Not blocked or deleted
+  and POHeader.loekz  =  ''
+  and POItem.loekz    =  ''
+  and POItem.elikz    =  ''
+
+  // PO net value above threshold — plain column >= plain param
+  and POItem.netwr    >= $parameters.p_po_value

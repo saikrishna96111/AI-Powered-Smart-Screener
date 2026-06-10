@@ -1385,7 +1385,7 @@ def _strip_cds_comments(cds_code: str) -> str:
 
 
 def _extract_ddl_name(cds_code: str) -> str | None:
-    """Return the identifier after 'define view [entity]' (e.g. ZC_DupVendorInvoice6d)."""
+    """Return the identifier after 'define view [entity]' (e.g. ZAI_DUPL_INV1)."""
     if not cds_code:
         return None
     m = re.search(
@@ -1530,7 +1530,7 @@ def _build_parameters_json(parameters: list[dict], ddl_name: str) -> str:
     """JSON payload the backend reads to know which values to send to the CDS view.
 
     Shape mirrors baseinfo for consistency:
-        { "PARAMETERS": { "VIEW": "ZC_...", "LIST": [ {name,type,label}, ... ] } }
+        { "PARAMETERS": { "VIEW": "ZAI_...", "LIST": [ {name,type,label}, ... ] } }
     """
     return json.dumps(
         {
@@ -1557,7 +1557,7 @@ def _xml_escape(text: str) -> str:
 
 def _build_abapgit_ddls_xml(ddl_name: str, ddtext: str) -> str:
     """abapGit DDLS serializer XML — same shape as the user's example file."""
-    safe_name = _xml_escape(ddl_name or "ZC_GENERATED")
+    safe_name = _xml_escape(ddl_name or "ZAI_GENERATED")
     safe_text = _xml_escape((ddtext or "Generated CDS view")[:120])
     return (
         '<?xml version="1.0" encoding="utf-8"?>\n'
@@ -1583,8 +1583,14 @@ def _write_cds_artifacts(
     xml_text: str,
     parameters_text: str,
 ) -> str | None:
-    """Write the four files into ./generated_cds/<ddl_name>/. Returns the dir, or None on error."""
-    safe_name = re.sub(r"[^A-Za-z0-9_]+", "_", ddl_name or "ZC_GENERATED").strip("_") or "ZC_GENERATED"
+    """Write the four files into ./generated_cds/<ddl_name>/. Returns the dir, or None on error.
+
+    File names are always lower-cased per the S/4HANA 2025 guardrails
+    (zai_dupl_inv1.ddls, etc.). The folder name preserves the original case
+    of the DDL identifier so it lines up with how it appears in ADT.
+    """
+    safe_name = re.sub(r"[^A-Za-z0-9_]+", "_", ddl_name or "ZAI_GENERATED").strip("_") or "ZAI_GENERATED"
+    file_stem = safe_name.lower()
     base_root = os.path.abspath(
         os.path.join(os.getcwd(), "generated_cds")
     )
@@ -1592,25 +1598,25 @@ def _write_cds_artifacts(
     try:
         os.makedirs(out_dir, exist_ok=True)
         with open(
-            os.path.join(out_dir, f"{safe_name}.ddls.asddls"),
+            os.path.join(out_dir, f"{file_stem}.ddls.asddls"),
             "w",
             encoding="utf-8",
         ) as f:
             f.write(cds_code or "")
         with open(
-            os.path.join(out_dir, f"{safe_name}.baseinfo"),
+            os.path.join(out_dir, f"{file_stem}.baseinfo"),
             "w",
             encoding="utf-8",
         ) as f:
             f.write(baseinfo_text or "")
         with open(
-            os.path.join(out_dir, f"{safe_name}.ddls.xml"),
+            os.path.join(out_dir, f"{file_stem}.ddls.xml"),
             "w",
             encoding="utf-8",
         ) as f:
             f.write(xml_text or "")
         with open(
-            os.path.join(out_dir, f"{safe_name}.parameters"),
+            os.path.join(out_dir, f"{file_stem}.parameters"),
             "w",
             encoding="utf-8",
         ) as f:
@@ -1628,7 +1634,7 @@ def _build_cds_artifacts(
     parameters is the structured list parsed out of the ``with parameters``
     clause; parameters_text is the JSON written to the ``.parameters`` file.
     """
-    ddl_name = _extract_ddl_name(cds_code) or "ZC_GeneratedView"
+    ddl_name = _extract_ddl_name(cds_code) or "ZAI_GeneratedView"
     tables = _extract_from_tables(cds_code)
     ddtext = _extract_ddtext(cds_code) or (intent or "Generated CDS view")
     baseinfo_text = _build_baseinfo_json(tables)
@@ -1636,6 +1642,87 @@ def _build_cds_artifacts(
     parameters = _extract_cds_parameters(cds_code)
     parameters_text = _build_parameters_json(parameters, ddl_name)
     return ddl_name, tables, baseinfo_text, xml_text, parameters_text, parameters
+
+
+# -----------------------------
+# RETRIEVE REFERENCE EXAMPLES
+# Pulls the closest gold CDS view(s) + supporting excerpts from the shared
+# Chroma store. Runs right before cds_node so the LLM sees a working
+# template that matches the user's intent.
+# -----------------------------
+
+
+def retrieve_examples_node(state: dict):
+    if not state.get("approved"):
+        return {}
+    if state.get("reference_examples_text"):
+        # Already retrieved in a previous turn (e.g. a re-run after editing).
+        return {}
+
+    try:
+        from .retrieval import retrieve_reference_examples, index_status
+    except Exception as exc:
+        print(f"[retrieve_examples_node] retrieval import failed: {exc}")
+        return {
+            "reference_examples_text": "(retrieval module unavailable — see logs)",
+            "reference_examples_meta": [],
+        }
+
+    status = index_status()
+    if not status.get("exists") or status.get("chunks", 0) <= 0:
+        print(
+            f"[retrieve_examples_node] vector store empty at {status.get('persist_dir')}; "
+            f"skipping retrieval. Run error_handling_agent/scripts/build_index.py to populate."
+        )
+        return {
+            "reference_examples_text": (
+                "(no reference examples available — "
+                "run error_handling_agent/scripts/build_index.py to populate the index)"
+            ),
+            "reference_examples_meta": [],
+        }
+
+    intent_text = (state.get("intent") or "").strip()
+    description = _all_user_text(state.get("messages", []))
+    query = (
+        f"Generate an ABAP CDS view for: {intent_text}.\n"
+        f"Business brief:\n{description[:1500]}"
+    )
+
+    try:
+        docs, text_block = retrieve_reference_examples(
+            query,
+            k_examples=2,
+            k_other=2,
+        )
+    except Exception as exc:
+        print(f"[retrieve_examples_node] retrieval failed: {exc}")
+        return {
+            "reference_examples_text": "(retrieval failed at runtime — see logs)",
+            "reference_examples_meta": [],
+        }
+
+    meta_summary: list[dict] = []
+    for d in docs:
+        m = d.metadata or {}
+        meta_summary.append(
+            {
+                "source_name": m.get("source_name", ""),
+                "source_type": m.get("source_type", ""),
+                "source": m.get("source", ""),
+            }
+        )
+
+    print(
+        f"[retrieve_examples_node] retrieved {len(docs)} doc(s); "
+        f"examples={sum(1 for m in meta_summary if m['source_type'] == 'example')}, "
+        f"others={sum(1 for m in meta_summary if m['source_type'] != 'example')}"
+    )
+
+    return {
+        "reference_examples_text": text_block,
+        "reference_examples_meta": meta_summary,
+    }
 
 
 # -----------------------------
@@ -1658,6 +1745,10 @@ def cds_node(state: dict):
             _format_params(state.get("cds_parameter_inputs", {})),
         )
         .replace("{{description}}", _all_user_text(state.get("messages", [])))
+        .replace(
+            "{{reference_examples}}",
+            (state.get("reference_examples_text") or "(no reference examples available)"),
+        )
     )
 
     resp = llm.invoke(
