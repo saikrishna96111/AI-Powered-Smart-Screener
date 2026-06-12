@@ -42,8 +42,8 @@ system: |
     Only flag a `WITH` that introduces a SELECT/CTE subquery.
 
   Also FAIL on (S/4HANA 2025 hard guardrails):
-  - Missing the mandatory top annotations including:
-    `@AccessControl.authorizationCheck: #NOT_REQUIRED`, `@OData.publish: true`
+  - Missing the mandatory top annotation
+    `@AccessControl.authorizationCheck: #NOT_REQUIRED`
     placed ABOVE the `define view` line.
   - Use of `@AbapCatalog.preserveKey` — DEPRECATED, must be removed.
   - DDL view name not starting with the literal `ZAI_` prefix OR longer than

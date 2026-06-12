@@ -16,9 +16,6 @@ Vendor bank changes and payment execution
   Parameter  : p_days_threshold — number of days between
                bank account change and payment posting date
   System     : S/4HANA 2025 On-Premise
-  OData V2   : Auto-published via @OData.publish: true
-               Service: ZI_VEND_BANK_CHG_PRE_PAY_CDS
-               Register: /IWFND/MAINT_SERVICE → Alias: Local
   OData V4   : ZSD_VEND_BANK_CHG_PAY
                ZSB_VEND_BNK_PAY_UI / ZSB_VEND_BNK_PAY_API
 =============================================================
@@ -49,22 +46,21 @@ Vendor bank changes and payment execution
   1.  @AbapCatalog.preserveKey removed — deprecated in 2025
   2.  @AccessControl.authorizationCheck: #NOT_REQUIRED
   3.  Parameter uses named data element 'int4' — OData safe
-  4.  @OData.publish: true placed directly above define view
-  5.  No COUNT — no aggregation needed in this view
-  6.  No aggregate inside CASE WHEN
-  7.  No inline subquery in JOIN
-  8.  No mandt in any JOIN or WHERE — implicit in CDS
-  9.  No IN operator — explicit OR for payment doc types
-  10. No function used as operator in WHERE clause
-  11. dats_add_days( date, days, 'INITIAL' ) — 3 params,
+  4.  No COUNT — no aggregation needed in this view
+  5.  No aggregate inside CASE WHEN
+  6.  No inline subquery in JOIN
+  7.  No mandt in any JOIN or WHERE — implicit in CDS
+  8.  No IN operator — explicit OR for payment doc types
+  9.  No function used as operator in WHERE clause
+  10. dats_add_days( date, days, 'INITIAL' ) — 3 params,
       used on RHS only — never as LHS operator in WHERE
-  12. dats_days_between used in SELECT list only — not WHERE
-  13. CDHDR field: objectclas (verified — not objectcl
+  11. dats_days_between used in SELECT list only — not WHERE
+  12. CDHDR field: objectclas (verified — not objectcl
       or objectclass)
-  14. lifnr and wrbtr sourced from bseg (not bkpf)
-  15. koart = 'K' restricts to vendor line items only
-  16. Criticality as cast literal — not CASE on aggregate
-  17. No GROUP BY — no aggregation in this view
+  13. lifnr and wrbtr sourced from bseg (not bkpf)
+  14. koart = 'K' restricts to vendor line items only
+  15. Criticality as cast literal — not CASE on aggregate
+  16. No GROUP BY — no aggregation in this view
 =============================================================
 */
 
@@ -80,11 +76,6 @@ Vendor bank changes and payment execution
     title:          { type: #STANDARD, value: 'Vendor' },
     description:    { type: #STANDARD, value: 'VendorName' }
 }
-
-// OData V2 auto-publish
-// Generates service: ZI_VEND_BANK_CHG_PRE_PAY_CDS
-// Register: SAP GUI → /IWFND/MAINT_SERVICE → Add Service → Alias: LOCAL
-@OData.publish: true
 
 define view ZI_VEND_BANK_CHG_PRE_PAY
   with parameters

@@ -1396,29 +1396,6 @@ def _extract_ddl_name(cds_code: str) -> str | None:
     return m.group(1) if m else None
 
 
-def _extract_from_tables(cds_code: str) -> list[str]:
-    """List of unique uppercase SAP table names referenced by FROM/JOIN clauses, in source order."""
-    if not cds_code:
-        return []
-    cleaned = _strip_cds_comments(cds_code)
-    seen: set[str] = set()
-    out: list[str] = []
-    pattern = re.compile(
-        r"\b(?:from|join)\s+([A-Za-z_][A-Za-z0-9_]*)",
-        re.IGNORECASE,
-    )
-    for m in pattern.finditer(cleaned):
-        name = m.group(1).upper()
-        # Skip identifiers that aren't real table-like tokens (CDS keywords, aliases)
-        if name in {"SELECT", "DISTINCT", "AS"}:
-            continue
-        if name in seen:
-            continue
-        seen.add(name)
-        out.append(name)
-    return out
-
-
 def _extract_ddtext(cds_code: str) -> str | None:
     """Pull the human label from @EndUserText.label: '...' (used as DDTEXT)."""
     if not cds_code:
@@ -1519,10 +1496,85 @@ def _extract_cds_parameters(cds_code: str) -> list[dict]:
     return out
 
 
-def _build_baseinfo_json(tables: list[str]) -> str:
-    """{ "BASEINFO": { "FROM": [TABLE1, TABLE2, ...] } } — pretty-printed."""
-    return json.dumps(
-        {"BASEINFO": {"FROM": list(tables)}}, indent=2, ensure_ascii=False
+def _derive_service_names(ddl_name: str) -> tuple[str, str]:
+    """Derive RAP service-definition and service-binding names from a CDS DDL name.
+
+    Convention used here:
+      * Replace the leading ``ZAI_`` prefix with ``ZSD_`` for the service definition.
+      * Replace the leading ``ZAI_`` prefix with ``ZSB_`` for the service binding.
+      * If the DDL name does not start with ``ZAI_``, prepend ``ZSD_`` / ``ZSB_``.
+
+    The resulting names follow the same length envelope as the CDS view name
+    (CDS views are <=20 chars; ZAI_ / ZSD_ / ZSB_ are all 4-char prefixes), so
+    they always fit within ABAP's 30-char object-name limit.
+    """
+    name = (ddl_name or "").strip() or "ZAI_GENERATED"
+    if name.upper().startswith("ZAI_"):
+        stem = name[4:]
+        srvd = f"ZSD_{stem}"
+        srvb = f"ZSB_{stem}"
+    else:
+        srvd = f"ZSD_{name}"
+        srvb = f"ZSB_{name}"
+    return srvd[:30], srvb[:30]
+
+
+def _build_service_definition_text(
+    service_def_name: str,
+    ddl_name: str,
+    ddtext: str,
+) -> str:
+    """ABAP RAP service-definition source (`.srvd.srvd`).
+
+    Exposes the generated CDS view as a single entity so the service binding
+    below can pick it up under the OData V4 UI protocol.
+    """
+    safe_label = (ddtext or "Generated CDS Service")[:60].replace("'", " ")
+    return (
+        f"@EndUserText.label: '{safe_label}'\n"
+        f"define service {service_def_name} {{\n"
+        f"  expose {ddl_name};\n"
+        f"}}\n"
+    )
+
+
+def _build_service_binding_xml(
+    service_binding_name: str,
+    service_def_name: str,
+    ddtext: str,
+) -> str:
+    """ABAP RAP service-binding source (`.srvb.srvb`).
+
+    XML payload that pins the binding to OData V4 / UI and references exactly
+    one service definition (version 0001). Mirrors the abapGit serializer
+    format used for our other companion artefacts so the file is consumable
+    by both abapGit and ADT.
+    """
+    safe_binding = _xml_escape(service_binding_name)
+    safe_service = _xml_escape(service_def_name)
+    safe_text = _xml_escape((ddtext or "Generated CDS Service Binding")[:120])
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<abapGit version="v1.0.0" serializer="LCL_OBJECT_SRVB" serializer_version="v1.0.0">\n'
+        ' <asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">\n'
+        '  <asx:values>\n'
+        '   <SRVB>\n'
+        f'    <BINDING_NAME>{safe_binding}</BINDING_NAME>\n'
+        '    <BINDING_TYPE>ODATA</BINDING_TYPE>\n'
+        '    <BINDING_VERSION>V4</BINDING_VERSION>\n'
+        '    <BINDING_CATEGORY>UI</BINDING_CATEGORY>\n'
+        f'    <DDTEXT>{safe_text}</DDTEXT>\n'
+        '    <SERVICES>\n'
+        '     <SERVICE>\n'
+        f'      <NAME>{safe_service}</NAME>\n'
+        '      <VERSION>0001</VERSION>\n'
+        '      <RELEASE_STATE>RELEASED</RELEASE_STATE>\n'
+        '     </SERVICE>\n'
+        '    </SERVICES>\n'
+        '   </SRVB>\n'
+        '  </asx:values>\n'
+        ' </asx:abap>\n'
+        '</abapGit>\n'
     )
 
 
@@ -1555,42 +1607,33 @@ def _xml_escape(text: str) -> str:
     )
 
 
-def _build_abapgit_ddls_xml(ddl_name: str, ddtext: str) -> str:
-    """abapGit DDLS serializer XML — same shape as the user's example file."""
-    safe_name = _xml_escape(ddl_name or "ZAI_GENERATED")
-    safe_text = _xml_escape((ddtext or "Generated CDS view")[:120])
-    return (
-        '<?xml version="1.0" encoding="utf-8"?>\n'
-        '<abapGit version="v1.0.0" serializer="LCL_OBJECT_DDLS" serializer_version="v1.0.0">\n'
-        ' <asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">\n'
-        '  <asx:values>\n'
-        '   <DDLS>\n'
-        f'    <DDLNAME>{safe_name}</DDLNAME>\n'
-        '    <DDLANGUAGE>E</DDLANGUAGE>\n'
-        f'    <DDTEXT>{safe_text}</DDTEXT>\n'
-        '    <SOURCE_TYPE>V</SOURCE_TYPE>\n'
-        '   </DDLS>\n'
-        '  </asx:values>\n'
-        ' </asx:abap>\n'
-        '</abapGit>\n'
-    )
+def _safe_object_stem(name: str, fallback: str) -> str:
+    """Lowercase, filesystem-safe stem for an ABAP object name (used as filename prefix)."""
+    safe = re.sub(r"[^A-Za-z0-9_]+", "_", name or fallback).strip("_") or fallback
+    return safe.lower()
 
 
 def _write_cds_artifacts(
     ddl_name: str,
     cds_code: str,
-    baseinfo_text: str,
-    xml_text: str,
     parameters_text: str,
+    service_def_name: str,
+    service_def_text: str,
+    service_binding_name: str,
+    service_binding_text: str,
 ) -> str | None:
-    """Write the four files into ./generated_cds/<ddl_name>/. Returns the dir, or None on error.
+    """Write all companion files into ./generated_cds/<ddl_name>/. Returns the dir, or None on error.
 
     File names are always lower-cased per the S/4HANA 2025 guardrails
     (zai_dupl_inv1.ddls, etc.). The folder name preserves the original case
-    of the DDL identifier so it lines up with how it appears in ADT.
+    of the DDL identifier so it lines up with how it appears in ADT. The
+    service-definition / service-binding files use their own object names
+    as the file stem (e.g. ``zsd_dupl_inv1.srvd.srvd``).
     """
     safe_name = re.sub(r"[^A-Za-z0-9_]+", "_", ddl_name or "ZAI_GENERATED").strip("_") or "ZAI_GENERATED"
     file_stem = safe_name.lower()
+    srvd_stem = _safe_object_stem(service_def_name, "zsd_generated")
+    srvb_stem = _safe_object_stem(service_binding_name, "zsb_generated")
     base_root = os.path.abspath(
         os.path.join(os.getcwd(), "generated_cds")
     )
@@ -1604,23 +1647,23 @@ def _write_cds_artifacts(
         ) as f:
             f.write(cds_code or "")
         with open(
-            os.path.join(out_dir, f"{file_stem}.baseinfo"),
-            "w",
-            encoding="utf-8",
-        ) as f:
-            f.write(baseinfo_text or "")
-        with open(
-            os.path.join(out_dir, f"{file_stem}.ddls.xml"),
-            "w",
-            encoding="utf-8",
-        ) as f:
-            f.write(xml_text or "")
-        with open(
             os.path.join(out_dir, f"{file_stem}.parameters"),
             "w",
             encoding="utf-8",
         ) as f:
             f.write(parameters_text or "")
+        with open(
+            os.path.join(out_dir, f"{srvd_stem}.srvd.srvd"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            f.write(service_def_text or "")
+        with open(
+            os.path.join(out_dir, f"{srvb_stem}.srvb.srvb"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            f.write(service_binding_text or "")
     except OSError:
         return None
     return out_dir
@@ -1628,20 +1671,36 @@ def _write_cds_artifacts(
 
 def _build_cds_artifacts(
     cds_code: str, intent: str
-) -> tuple[str, list[str], str, str, str, list[dict]]:
-    """Returns (ddl_name, tables, baseinfo_text, xml_text, parameters_text, parameters).
+) -> tuple[str, str, list[dict], str, str, str, str]:
+    """Build every companion artefact derived from the generated CDS code.
 
-    parameters is the structured list parsed out of the ``with parameters``
-    clause; parameters_text is the JSON written to the ``.parameters`` file.
+    Returns ``(ddl_name, parameters_text, parameters, service_def_name,
+    service_def_text, service_binding_name, service_binding_text)``.
+    ``parameters`` is the structured list parsed out of the ``with parameters``
+    clause; ``parameters_text`` is the JSON written to the ``.parameters``
+    file. The service-definition / service-binding artefacts implement the
+    RAP V4-UI exposure of the view.
     """
     ddl_name = _extract_ddl_name(cds_code) or "ZAI_GeneratedView"
-    tables = _extract_from_tables(cds_code)
     ddtext = _extract_ddtext(cds_code) or (intent or "Generated CDS view")
-    baseinfo_text = _build_baseinfo_json(tables)
-    xml_text = _build_abapgit_ddls_xml(ddl_name, ddtext)
     parameters = _extract_cds_parameters(cds_code)
     parameters_text = _build_parameters_json(parameters, ddl_name)
-    return ddl_name, tables, baseinfo_text, xml_text, parameters_text, parameters
+    service_def_name, service_binding_name = _derive_service_names(ddl_name)
+    service_def_text = _build_service_definition_text(
+        service_def_name, ddl_name, ddtext
+    )
+    service_binding_text = _build_service_binding_xml(
+        service_binding_name, service_def_name, ddtext
+    )
+    return (
+        ddl_name,
+        parameters_text,
+        parameters,
+        service_def_name,
+        service_def_text,
+        service_binding_name,
+        service_binding_text,
+    )
 
 
 # -----------------------------
@@ -1764,14 +1823,21 @@ def cds_node(state: dict):
 
     (
         ddl_name,
-        _tables,
-        baseinfo_text,
-        xml_text,
         parameters_text,
         parameters,
+        service_def_name,
+        service_def_text,
+        service_binding_name,
+        service_binding_text,
     ) = _build_cds_artifacts(cds_code, state.get("intent") or "")
     out_dir = _write_cds_artifacts(
-        ddl_name, cds_code, baseinfo_text, xml_text, parameters_text
+        ddl_name,
+        cds_code,
+        parameters_text,
+        service_def_name,
+        service_def_text,
+        service_binding_name,
+        service_binding_text,
     )
 
     artifacts_block = (
@@ -1780,9 +1846,9 @@ def cds_node(state: dict):
         else "\n\n---\n\n**Companion artifacts** (could not write to disk — copy manually)"
     )
     artifacts_block += (
-        f"\n\n`{ddl_name}.baseinfo`\n\n```json\n{baseinfo_text}\n```\n\n"
-        f"`{ddl_name}.ddls.xml`\n\n```xml\n{xml_text}```\n\n"
-        f"`{ddl_name}.parameters`\n\n```json\n{parameters_text}\n```"
+        f"\n\n`{ddl_name}.parameters`\n\n```json\n{parameters_text}\n```\n\n"
+        f"`{service_def_name}.srvd.srvd`\n\n```abap\n{service_def_text}```\n\n"
+        f"`{service_binding_name}.srvb.srvb`\n\n```xml\n{service_binding_text}```"
     )
 
     confirmation = (
@@ -1795,10 +1861,12 @@ def cds_node(state: dict):
         "cds_code": cds_code,
         "cds_review_done": False,
         "cds_ddl_name": ddl_name,
-        "cds_baseinfo": baseinfo_text,
-        "cds_xml": xml_text,
         "cds_parameters_text": parameters_text,
         "cds_parameters": parameters,
+        "cds_service_def_name": service_def_name,
+        "cds_service_def_text": service_def_text,
+        "cds_service_binding_name": service_binding_name,
+        "cds_service_binding_text": service_binding_text,
         "cds_artifacts_dir": out_dir,
     }
 
@@ -1921,14 +1989,21 @@ def syntax_review_node(state: dict):
     # Recompute companion artifacts for whatever cds_code we finished with
     (
         ddl_name,
-        _tables,
-        baseinfo_text,
-        xml_text,
         parameters_text,
         parameters,
+        service_def_name,
+        service_def_text,
+        service_binding_name,
+        service_binding_text,
     ) = _build_cds_artifacts(cds_code, intent)
     out_dir = _write_cds_artifacts(
-        ddl_name, cds_code, baseinfo_text, xml_text, parameters_text
+        ddl_name,
+        cds_code,
+        parameters_text,
+        service_def_name,
+        service_def_text,
+        service_binding_name,
+        service_binding_text,
     )
 
     # Build the user-facing summary
@@ -1971,9 +2046,9 @@ def syntax_review_node(state: dict):
         revised_block += (
             f"\n\n**Updated companion artifacts** "
             + (f"(rewritten in `{out_dir}`)" if out_dir else "(disk write failed)")
-            + f"\n\n`{ddl_name}.baseinfo`\n\n```json\n{baseinfo_text}\n```\n\n"
-            f"`{ddl_name}.ddls.xml`\n\n```xml\n{xml_text}```\n\n"
-            f"`{ddl_name}.parameters`\n\n```json\n{parameters_text}\n```"
+            + f"\n\n`{ddl_name}.parameters`\n\n```json\n{parameters_text}\n```\n\n"
+            f"`{service_def_name}.srvd.srvd`\n\n```abap\n{service_def_text}```\n\n"
+            f"`{service_binding_name}.srvb.srvb`\n\n```xml\n{service_binding_text}```"
         )
 
     message = header + issues_block + revised_block
@@ -1989,10 +2064,12 @@ def syntax_review_node(state: dict):
     if code_changed:
         out["cds_code"] = cds_code
         out["cds_ddl_name"] = ddl_name
-        out["cds_baseinfo"] = baseinfo_text
-        out["cds_xml"] = xml_text
         out["cds_parameters_text"] = parameters_text
         out["cds_parameters"] = parameters
+        out["cds_service_def_name"] = service_def_name
+        out["cds_service_def_text"] = service_def_text
+        out["cds_service_binding_name"] = service_binding_name
+        out["cds_service_binding_text"] = service_binding_text
         out["cds_artifacts_dir"] = out_dir
 
     return out
@@ -2059,30 +2136,39 @@ def cds_review_node(state: dict):
             out["cds_code"] = candidate
 
     if refined:
-        # Re-generate the companion files so baseinfo/xml/parameters track the revised DDL.
+        # Re-generate the companion files so parameters/service-binding track the revised DDL.
         (
             ddl_name,
-            _tables,
-            baseinfo_text,
-            xml_text,
             parameters_text,
             parameters,
+            service_def_name,
+            service_def_text,
+            service_binding_name,
+            service_binding_text,
         ) = _build_cds_artifacts(refined, state.get("intent") or "")
         out_dir = _write_cds_artifacts(
-            ddl_name, refined, baseinfo_text, xml_text, parameters_text
+            ddl_name,
+            refined,
+            parameters_text,
+            service_def_name,
+            service_def_text,
+            service_binding_name,
+            service_binding_text,
         )
         out["cds_ddl_name"] = ddl_name
-        out["cds_baseinfo"] = baseinfo_text
-        out["cds_xml"] = xml_text
         out["cds_parameters_text"] = parameters_text
         out["cds_parameters"] = parameters
+        out["cds_service_def_name"] = service_def_name
+        out["cds_service_def_text"] = service_def_text
+        out["cds_service_binding_name"] = service_binding_name
+        out["cds_service_binding_text"] = service_binding_text
         out["cds_artifacts_dir"] = out_dir
         review_message += (
             f"\n\n---\n\n**Revised companion artifacts** "
             + (f"(updated in `{out_dir}`)" if out_dir else "(disk write failed)")
-            + f"\n\n`{ddl_name}.baseinfo`\n\n```json\n{baseinfo_text}\n```\n\n"
-            f"`{ddl_name}.ddls.xml`\n\n```xml\n{xml_text}```\n\n"
-            f"`{ddl_name}.parameters`\n\n```json\n{parameters_text}\n```"
+            + f"\n\n`{ddl_name}.parameters`\n\n```json\n{parameters_text}\n```\n\n"
+            f"`{service_def_name}.srvd.srvd`\n\n```abap\n{service_def_text}```\n\n"
+            f"`{service_binding_name}.srvb.srvb`\n\n```xml\n{service_binding_text}```"
         )
 
     out["messages"] = [AIMessage(content=review_message)]

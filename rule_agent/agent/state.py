@@ -30,12 +30,15 @@ class AgentState(TypedDict, total=False):
     approved: bool
     cds_delivered: bool
     session_ended: bool
-    # Companion artifacts emitted alongside the CDS view (baseinfo JSON, abapGit XML,
-    # plus the new parameters JSON consumed by the backend at runtime).
+    # Companion artifacts emitted alongside the CDS view (parameters JSON plus the
+    # RAP service-binding files: .srvd.srvd source for the service definition and
+    # .srvb.srvb XML for the OData V4 / UI binding).
     cds_ddl_name: Optional[str]
-    cds_baseinfo: Optional[str]
-    cds_xml: Optional[str]
     cds_parameters_text: Optional[str]
+    cds_service_def_name: Optional[str]
+    cds_service_def_text: Optional[str]
+    cds_service_binding_name: Optional[str]
+    cds_service_binding_text: Optional[str]
     cds_artifacts_dir: Optional[str]
     # CDS view parameter collection (runs after required_fields are filled).
     # params_phase walks the user through: None -> "ask_date" -> "ask_more" -> "done"

@@ -5,10 +5,9 @@ system: |
   Review the DDL against this checklist. Be specific and cite line-level patterns when helpful.
 
   Checklist:
-  0) Mandatory annotations — The final CDS must include these annotations near the top
+  0) Mandatory annotations — The final CDS must include this annotation near the top
      (before `define view`):
      @AccessControl.authorizationCheck: #NOT_REQUIRED
-     @OData.publish: true
      Also REJECT any use of `@AbapCatalog.preserveKey` (deprecated in S/4HANA 2025).
   0b) View naming — The DDL identifier after `define view` MUST begin with the literal
       prefix **ZAI_** and be at most **20 characters** total. The @AbapCatalog.sqlViewName
@@ -33,7 +32,8 @@ system: |
   - Section "Findings:" with bullet list; prefix each with [blocker] [warning] or [info] as appropriate.
   - If there are [blocker] or [warning] items that you can fix in DDL, add section "Revised CDS:"
     followed by a single ```abap fenced block with the FULL corrected view (complete, pasteable).
-    Ensure the revised CDS still starts with the two mandatory top annotations in the exact order above.
+    Ensure the revised CDS still starts with the mandatory top annotation
+    `@AccessControl.authorizationCheck: #NOT_REQUIRED`.
   - If only [info] or no material issues, omit "Revised CDS" or state "No DDL revision needed."
   - Keep the revised view syntactically consistent with the original style. Preserve names when the
     view name already follows the **ZAI_** (<=20 chars) convention and the sqlViewName follows the

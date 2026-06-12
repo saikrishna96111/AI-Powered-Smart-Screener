@@ -10,18 +10,12 @@ Duplicate Invoice Check
 
 @EndUserText.label: 'Duplicate Invoice Detection'
 
-@OData.publish: true
-
 @UI.headerInfo: { typeName: 'Duplicate Invoice',
 typeNamePlural: 'Duplicate Invoices',
 title: { type: #STANDARD, value: 'ExternalInvoiceNumber' },
 description: { type: #STANDARD, value: 'VendorName' } }
 
 @VDM.viewType: #CONSUMPTION
-
-// OData V2 auto-publish
-// Generates service: ZI_DUPLICATE_INVOICE_DETECT_CDS
-// Register in SAP GUI: /IWFND/MAINT_SERVICE → Add Service → Alias: Local
 
 define view ZAI_DUPL_INV1
 with parameters

@@ -16,9 +16,6 @@ PO Creator and Approver are the same
                Release Strategy, not SAP Workflow for PO.
   Parameter  : p_po_value — minimum PO net value to flag
   System     : S/4HANA 2025 On-Premise
-  OData V2   : Auto-published via @OData.publish: true
-               Service: ZI_PO_CREATOR_APPROVER_SAME_CDS
-               Register: /IWFND/MAINT_SERVICE → Alias: Local
   OData V4   : ZSD_PO_CREATOR_APPROVER
                ZSB_PO_CR_APP_UI / ZSB_PO_CR_APP_API
 =============================================================
@@ -46,16 +43,15 @@ PO Creator and Approver are the same
   --------------------------
   1.  @AbapCatalog.preserveKey removed — deprecated in 2025
   2.  Named data element netwr_ap for PO value parameter
-  3.  @OData.publish: true above define view
-  4.  No aggregation — no GROUP BY needed
-  5.  No aggregate inside CASE WHEN
-  6.  No inline subquery in JOIN
-  7.  No mandt in any JOIN or WHERE
-  8.  No IN operator — explicit OR for tcode filter
-  9.  No function in WHERE clause
-  10. Criticality as cast literal
-  11. objectclas = 'EINKBELEG' — correct for PO change docs
-  12. CDHDR field: objectclas (not objectcl / objectclass)
+  3.  No aggregation — no GROUP BY needed
+  4.  No aggregate inside CASE WHEN
+  5.  No inline subquery in JOIN
+  6.  No mandt in any JOIN or WHERE
+  7.  No IN operator — explicit OR for tcode filter
+  8.  No function in WHERE clause
+  9.  Criticality as cast literal
+  10. objectclas = 'EINKBELEG' — correct for PO change docs
+  11. CDHDR field: objectclas (not objectcl / objectclass)
 =============================================================
 */
 
@@ -71,8 +67,6 @@ PO Creator and Approver are the same
     title:          { type: #STANDARD, value: 'PurchaseOrder' },
     description:    { type: #STANDARD, value: 'VendorName' }
 }
-
-@OData.publish: true
 
 define view ZAI_PO_CREATOR_APPR
   with parameters
