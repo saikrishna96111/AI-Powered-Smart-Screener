@@ -59,8 +59,8 @@ def main() -> None:
 
     print("Generate Test Data Agent\n")
     print(
-        "Use this after rule_agent (or any CDS). You get **synthetic** rows and **Markdown** tables "
-        "(plus optional Mermaid) showing how the view behaves.\n"
+        "Use this after rule_agent (or any CDS). You get **synthetic** SAP rows plus **investigation "
+        "case** payloads (case list + case detail) in Markdown, aligned with the cases UI mockup.\n"
     )
 
     while True:

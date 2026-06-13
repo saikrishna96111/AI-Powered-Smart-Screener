@@ -8,7 +8,8 @@
 GENERAL SYNTAX
 - Use AND / OR / NOT (uppercase keywords) in WHERE clauses.
 - All generated artefact file names must be lowercase
-  (e.g. zai_dupl_inv1.ddls.asddls, zai_dupl_inv1.parameters,
+  (e.g. zai_dupl_inv1.ddls.asddls, zai_dupl_inv1.baseinfo,
+  zai_dupl_inv1.ddls.xml, zai_dupl_inv1.parameters,
   zsd_dupl_inv1.srvd.srvd, zsb_dupl_inv1.srvb.srvb).
 
 DEPRECATED / FORBIDDEN ANNOTATIONS
