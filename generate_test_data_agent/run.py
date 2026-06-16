@@ -3,6 +3,7 @@
 from agent.graph import build_graph
 
 SENTINEL_CDS = "###END_CDS###"
+SENTINEL_SRVD = "###END_SRVD###"
 SENTINEL_CTX = "###END_CTX###"
 
 
@@ -40,6 +41,20 @@ def read_until(
     return "\n".join(parts).strip()
 
 
+def read_optional_srvd() -> str:
+    print(
+        "\n--- Optional: RAP service definition (.srvd.srvd from rule_agent) ---\n"
+        "Leave the first line **empty** to skip.\n"
+        "Otherwise paste the service-definition source and end with ###END_SRVD### (same line OK).\n"
+    )
+    first = input()
+    if not first.strip():
+        return ""
+    if SENTINEL_SRVD in first:
+        return first[: first.find(SENTINEL_SRVD)].strip()
+    return read_until(SENTINEL_SRVD, "(continue .srvd.srvd)", seed=first.rstrip("\n"))
+
+
 def read_optional_rule_context() -> str:
     print(
         "\n--- Optional: rule / control description (from rule_agent summary or Q&A) ---\n"
@@ -59,7 +74,8 @@ def main() -> None:
 
     print("Generate Test Data Agent\n")
     print(
-        "Use this after rule_agent (or any CDS). You get **synthetic** SAP rows plus **investigation "
+        "Use this after rule_agent (or any CDS). Paste the CDS DDL and optionally the "
+        "`.srvd.srvd` service definition. You get **synthetic** SAP rows plus **investigation "
         "case** payloads (case list + case detail) in Markdown, aligned with the cases UI mockup.\n"
     )
 
@@ -76,12 +92,14 @@ def main() -> None:
             print("No CDS. Try again or quit.\n")
             continue
 
+        srvd = read_optional_srvd()
         rule_ctx = read_optional_rule_context()
 
         state = graph.invoke(
             {
                 "messages": [],
                 "cds_source": cds,
+                "srvd_source": srvd,
                 "rule_context": rule_ctx,
                 "session_ended": False,
             }

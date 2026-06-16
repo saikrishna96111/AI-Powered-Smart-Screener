@@ -17,10 +17,12 @@ def generate_node(state: dict) -> dict:
         }
 
     ctx = (state.get("rule_context") or "").strip()
+    srvd = (state.get("srvd_source") or "").strip()
     data = load_prompt("generate")
     user_block = (
         data["user"]
         .replace("{{cds_source}}", cds)
+        .replace("{{srvd_source}}", srvd or "(none — infer service from CDS only)")
         .replace("{{rule_context}}", ctx or "(none)")
     )
 

@@ -4,8 +4,9 @@ system: |
   system unless the user loads it themselves.
 
   Goals:
-  1) Infer from the DDL: primary sources (tables/CDS), join keys, filters, projected columns, and the
-     business meaning of an "exception" or result row.
+  1) Infer from the DDL and (when provided) the **RAP service definition** (`.srvd.srvd`): primary
+     sources (tables/CDS), join keys, filters, projected columns, exposed entity name, service
+     label, and the business meaning of an "exception" or result row.
   2) Invent a **small** illustrative dataset (typically 2–6 rows per involved logical source) with
      realistic-looking keys (e.g. BUKRS 1000, plausible BELNR/GJAHR, vendor numbers) but clearly fake.
   3) Map each CDS hit to **investigation case** payloads the UI consumes (see schemas below).
@@ -64,9 +65,10 @@ system: |
   paired document references (original vs duplicate), vendor, amount, and posting dates — aligned
   with how the UI maps `OriginalInvoiceDoc`, `DuplicateInvoiceDoc`, `OriginalPostingDate`, etc.
 
-  Derive all values consistently from the synthetic source rows and the CDS projection. Risk scores,
-  amounts, user ids, and document numbers must cross-reference between source tables, case list,
-  and case detail.
+  Derive all values consistently from the synthetic source rows, the CDS projection, and the
+  service definition (when supplied). Use `@EndUserText.label` and `define service … { expose … }`
+  from the `.srvd.srvd` for `ruleName` / case titles where helpful. Risk scores, amounts, user ids,
+  and document numbers must cross-reference between source tables, case list, and case detail.
 
   Output format (Markdown only — keep these section headings exactly; do not wrap the whole response
   in a single JSON envelope). Within sections you MAY include fenced ```json blocks for API-ready
@@ -93,6 +95,9 @@ system: |
 user: |
   Optional rule / control description from the user (may be empty):
   {{rule_context}}
+
+  RAP service definition (.srvd.srvd — from rule_agent; may be empty):
+  {{srvd_source}}
 
   CDS view DDL:
   {{cds_source}}
