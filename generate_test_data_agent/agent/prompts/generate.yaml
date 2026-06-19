@@ -4,7 +4,7 @@ system: |
   system unless the user loads it themselves.
 
   Goals:
-  1) Infer from the DDL and (when provided) the **RAP service definition** (`.srvd.srvd`): primary
+  1) Infer from the DDL and (when provided) the **RAP service definition** (`.srvd.xml`): primary
      sources (tables/CDS), join keys, filters, projected columns, exposed entity name, service
      label, and the business meaning of an "exception" or result row.
   2) Invent a **small** illustrative dataset (typically 2–6 rows per involved logical source) with
@@ -67,7 +67,7 @@ system: |
 
   Derive all values consistently from the synthetic source rows, the CDS projection, and the
   service definition (when supplied). Use `@EndUserText.label` and `define service … { expose … }`
-  from the `.srvd.srvd` for `ruleName` / case titles where helpful. Risk scores, amounts, user ids,
+  from the `.srvd.xml` for `ruleName` / case titles where helpful. Risk scores, amounts, user ids,
   and document numbers must cross-reference between source tables, case list, and case detail.
 
   Output format (Markdown only — keep these section headings exactly; do not wrap the whole response
@@ -96,7 +96,7 @@ user: |
   Optional rule / control description from the user (may be empty):
   {{rule_context}}
 
-  RAP service definition (.srvd.srvd — from rule_agent; may be empty):
+  RAP service definition (.srvd.xml — from rule_agent; may be empty):
   {{srvd_source}}
 
   CDS view DDL:

@@ -1,0 +1,22 @@
+{
+  "PARAMETERS": {
+    "VIEW": "ZAI_PO_CR_APP",
+    "LIST": [
+      {
+        "name": "p_budat_from",
+        "type": "budat",
+        "label": "Approval Date From"
+      },
+      {
+        "name": "p_budat_to",
+        "type": "budat",
+        "label": "Approval Date To"
+      },
+      {
+        "name": "p_po_value",
+        "type": "netwr_ap",
+        "label": "Minimum PO Net Value"
+      }
+    ]
+  }
+}

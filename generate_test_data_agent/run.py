@@ -43,7 +43,7 @@ def read_until(
 
 def read_optional_srvd() -> str:
     print(
-        "\n--- Optional: RAP service definition (.srvd.srvd from rule_agent) ---\n"
+        "\n--- Optional: RAP service definition (.srvd.xml from rule_agent) ---\n"
         "Leave the first line **empty** to skip.\n"
         "Otherwise paste the service-definition source and end with ###END_SRVD### (same line OK).\n"
     )
@@ -52,7 +52,7 @@ def read_optional_srvd() -> str:
         return ""
     if SENTINEL_SRVD in first:
         return first[: first.find(SENTINEL_SRVD)].strip()
-    return read_until(SENTINEL_SRVD, "(continue .srvd.srvd)", seed=first.rstrip("\n"))
+    return read_until(SENTINEL_SRVD, "(continue .srvd.xml)", seed=first.rstrip("\n"))
 
 
 def read_optional_rule_context() -> str:
@@ -75,7 +75,7 @@ def main() -> None:
     print("Generate Test Data Agent\n")
     print(
         "Use this after rule_agent (or any CDS). Paste the CDS DDL and optionally the "
-        "`.srvd.srvd` service definition. You get **synthetic** SAP rows plus **investigation "
+        "`.srvd.xml` service definition. You get **synthetic** SAP rows plus **investigation "
         "case** payloads (case list + case detail) in Markdown, aligned with the cases UI mockup.\n"
     )
 

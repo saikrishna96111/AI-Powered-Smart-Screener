@@ -1,10 +1,14 @@
 """Read-side retrieval for the rule-agent.
 
 The CDS examples + guidelines + SAP Help portal pages are ingested by the
-error-handling agent's pipeline (``error_handling_agent/scripts/build_index.py``)
+error_handling agent's pipeline (``error_handling_agent/scripts/build_index.py``)
 into a persistent Chroma store. This module is the **read** path used by the
 rule-agent during CDS generation: it opens the same Chroma directory, runs
 similarity search, and formats the top hits as a prompt-ready block.
+
+**Guidelines are always injected** from ``cds_guardrails.txt`` on disk (full
+file) whenever the rule agent retrieves context, so guardrails are present
+even if the vector index is stale or similarity search ranks them low.
 
 Path resolution (in order of precedence):
   1. ``$AISS_VECTOR_STORE_DIR`` environment variable
@@ -12,7 +16,8 @@ Path resolution (in order of precedence):
 
 The module degrades gracefully: if the store is missing (e.g. the user
 hasn't run ``build_index.py`` yet) or chromadb / sentence-transformers
-isn't installed, ``retrieve_reference_examples`` returns an empty list.
+isn't installed, ``retrieve_reference_examples`` still returns guidelines
+from disk when available.
 """
 
 from __future__ import annotations
@@ -25,6 +30,14 @@ from typing import Any
 _THIS_DIR = Path(__file__).resolve().parent
 _REPO_DEFAULT_STORE = (
     _THIS_DIR.parent.parent / "error_handling_agent" / "vector_store" / "cds_docs"
+)
+_GUIDELINES_PATH = (
+    _THIS_DIR.parent.parent
+    / "error_handling_agent"
+    / "data"
+    / "sources"
+    / "guidelines"
+    / "cds_guardrails.txt"
 )
 
 _EMBED_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
@@ -68,6 +81,35 @@ def _safe_collection_size() -> int:
         return vs._collection.count()
     except Exception:
         return 0
+
+
+def load_cds_guardrails_text() -> str:
+    """Return the full CDS guardrails document (always read from disk for rule-agent)."""
+    try:
+        if _GUIDELINES_PATH.is_file():
+            return _GUIDELINES_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        pass
+    return ""
+
+
+def _format_retrieval_block(docs: list[Any], *, guidelines_text: str) -> str:
+    """Build the prompt block: mandatory guardrails first, then examples + excerpts."""
+    parts: list[str] = []
+
+    if guidelines_text:
+        parts.append("=== CDS Guardrails (S/4HANA 2025 — mandatory) ===")
+        parts.append(guidelines_text)
+        parts.append("")
+
+    example_block = _format_example_block(docs)
+    if example_block and not example_block.startswith("(no reference"):
+        parts.append("=== Reference CDS examples and supporting excerpts ===")
+        parts.append(example_block)
+    elif not guidelines_text:
+        parts.append(example_block)
+
+    return "\n".join(parts).strip() or "(no reference material available)"
 
 
 def _format_example_block(docs: list[Any]) -> str:
@@ -117,28 +159,32 @@ def retrieve_reference_examples(
     *,
     k_examples: int = 2,
     k_other: int = 2,
+    k_guidelines: int = 2,
 ) -> tuple[list[Any], str]:
-    """Pull the most relevant gold examples (+ a few supporting excerpts).
+    """Pull guardrails (always) + gold examples + supporting excerpts.
 
     Returns ``(docs, prompt_text)``. ``docs`` is the raw list of LangChain
     Document objects (useful if a caller wants its own formatting);
     ``prompt_text`` is the ready-to-inject block for the cds.yaml template.
 
     Strategy:
+      0. Always prepend the full ``cds_guardrails.txt`` from disk.
       1. Filter Chroma for ``source_type == "example"`` and take the
          top-``k_examples`` (full gold CDS views).
-      2. Filter for the OTHER source_types (guideline, web, pdf) and take
-         the top-``k_other`` chunks as supporting evidence.
-      3. Concatenate and format.
+      2. Filter for ``source_type == "guideline"`` (RAG index supplement).
+      3. Filter for OTHER source_types (web, pdf) as supporting evidence.
+      4. Concatenate and format.
     """
+    guidelines_text = load_cds_guardrails_text()
     vs = _get_vector_store()
     if vs is None:
-        return [], _format_example_block([])
+        return [], _format_retrieval_block([], guidelines_text=guidelines_text)
 
-    query = (query or "").strip() or "ABAP CDS view template"
+    query = (query or "").strip() or "ABAP CDS view template S/4HANA 2025 guardrails"
 
     docs: list = []
-    # Step 1 — gold examples first (Chroma metadata filter).
+
+    # Step 1 — gold examples (Chroma metadata filter).
     try:
         ex = vs.similarity_search(
             query,
@@ -147,21 +193,35 @@ def retrieve_reference_examples(
         )
         docs.extend(ex)
     except Exception:
-        ex = []
+        pass
 
-    # Step 2 — supporting context (anything not "example").
+    # Step 2 — guideline chunks from the vector index (supplement disk file).
+    if k_guidelines > 0:
+        try:
+            gl = vs.similarity_search(
+                query,
+                k=max(1, k_guidelines),
+                filter={"source_type": "guideline"},
+            )
+            for d in gl:
+                if d not in docs:
+                    docs.append(d)
+        except Exception:
+            pass
+
+    # Step 3 — other supporting context (web, pdf, …).
     if k_other > 0:
         try:
             other = vs.similarity_search(
                 query,
                 k=max(1, k_other),
-                filter={"source_type": {"$ne": "example"}},
+                filter={"source_type": {"$nin": ["example", "guideline"]}},
             )
             docs.extend(other)
         except Exception:
             pass
 
-    return docs, _format_example_block(docs)
+    return docs, _format_retrieval_block(docs, guidelines_text=guidelines_text)
 
 
 def index_status() -> dict:

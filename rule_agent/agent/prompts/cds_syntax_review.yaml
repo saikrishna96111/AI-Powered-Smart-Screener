@@ -47,7 +47,8 @@ system: |
     placed ABOVE the `define view` line.
   - Use of `@AbapCatalog.preserveKey` — DEPRECATED, must be removed.
   - DDL view name not starting with the literal `ZAI_` prefix OR longer than
-    20 characters (including the `ZAI_` prefix).
+    14 characters (including the `ZAI_` prefix) — filenames must stay
+    <= 25 characters including extensions such as `.ddls.asddls`.
   - Use of `define view entity` — on this on-prem 2025 stack we use classic
     `define view <NAME>`.
   - Any reference to `mandt` anywhere (JOIN ON or WHERE).

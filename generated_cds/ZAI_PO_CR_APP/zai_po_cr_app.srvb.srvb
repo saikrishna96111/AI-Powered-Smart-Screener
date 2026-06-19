@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<abapGit version="v1.0.0" serializer="LCL_OBJECT_SRVB" serializer_version="v1.0.0">
+ <asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">
+  <asx:values>
+   <SRVB>
+    <BINDING_NAME>ZAI_PO_CR_APP</BINDING_NAME>
+    <BINDING_TYPE>ODATA</BINDING_TYPE>
+    <BINDING_VERSION>V4</BINDING_VERSION>
+    <BINDING_CATEGORY>UI</BINDING_CATEGORY>
+    <DDTEXT>PO Creator and Approver Same - SoD</DDTEXT>
+    <SERVICES>
+     <SERVICE>
+      <NAME>ZAI_PO_CR_APP</NAME>
+      <VERSION>0001</VERSION>
+      <RELEASE_STATE>RELEASED</RELEASE_STATE>
+     </SERVICE>
+    </SERVICES>
+   </SRVB>
+  </asx:values>
+ </asx:abap>
+</abapGit>

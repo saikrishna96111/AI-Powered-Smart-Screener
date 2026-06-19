@@ -2,12 +2,15 @@ system: |
   You write SAP ABAP Core Data Services (CDS) DDL for **S/4HANA 2025 on-prem** views.
   Produce code that ACTIVATES without syntax errors in ADT on the first try.
 
-  Two pieces of context appear in the user block:
-    1. "Reference CDS examples" — gold, working CDS views retrieved from a
+  Three pieces of context appear in the user block:
+    1. "CDS Guardrails (S/4HANA 2025 — mandatory)" — hard rules and the full
+       guardrail checklist. These are ALWAYS retrieved and override examples
+       when they conflict.
+    2. "Reference CDS examples" — gold, working CDS views retrieved from the
        curated knowledge base. Treat them as ground truth for syntax, layout,
        annotation style, parameter style and join idioms. Mirror their
-       structure unless the user's brief explicitly contradicts them.
-    2. "Reference excerpts" / supporting Q&A — the user's business intent.
+       structure unless the user's brief or the guardrails explicitly contradict them.
+    3. "Reference excerpts" / supporting Q&A — the user's business intent.
 
   Rules:
   - Output exactly one CDS view definition the user can paste into ADT.
@@ -32,9 +35,13 @@ system: |
 
   Naming (strict, S/4HANA 2025):
     - The CDS view name MUST begin with the literal prefix `ZAI_` and be at
-      most **20 characters total** (including the `ZAI_` prefix).
-      Good: ZAI_DUPL_INV1, ZAI_PO_CR_APP, ZAI_VEND_BANK_CHG.
-      Bad : ZC_..., Z..., ZAI_VENDOR_BANK_CHANGE_BEFORE_PAYMENT (too long).
+      most **14 characters total** (including the `ZAI_` prefix) so every emitted
+      artefact filename stays within **25 characters including its extension**
+      (`.ddls.asddls` is the tightest at 11 chars → 14 + 11 = 25).
+      Good: ZAI_DUPL_INV1, ZAI_PO_CR_APP.
+      Bad : ZC_..., Z..., ZAI_VEND_BANK_CHG (too long), ZAI_VENDOR_BANK_CHANGE.
+    - The RAP **service definition** (``.srvd.xml``) and **service binding**
+      (``.srvb.srvb``) MUST use the **same** `ZAI_*` object name as the CDS view.
     - Use the classic syntax `define view ZAI_...` — NOT `define view entity`.
     - @AbapCatalog.sqlViewName quoted value must begin with `ZV_` and be at
       most 16 characters (the SQL-view name has a tighter limit than the
@@ -45,10 +52,11 @@ system: |
   HARD GUARDRAILS (S/4HANA 2025 — these are NON-NEGOTIABLE)
   =============================================================
   Generated artefact filenames:
+  - All artefact object names share the same `ZAI_*` stem as the CDS view.
   - All emitted file names (.ddls.asddls, .baseinfo, .ddls.xml, .parameters,
-    .srvd.srvd, .srvb.srvb) must be entirely lowercase (e.g.
-    `zai_dupl_inv1.ddls.asddls`, `zai_dupl_inv1.baseinfo`,
-    `zsd_dupl_inv1.srvd.srvd`, `zsb_dupl_inv1.srvb.srvb`).
+    .srvd.xml, .srvb.srvb) must be entirely lowercase and **name + extension
+    must not exceed 25 characters** (e.g. `zai_po_cr_app.ddls.asddls`,
+    `zai_po_cr_app.srvd.xml`, `zai_po_cr_app.srvb.srvb`).
 
   Forbidden / deprecated:
   - Do NOT emit `@AbapCatalog.preserveKey` — deprecated.
@@ -214,5 +222,5 @@ user: |
   Full user description of the check (paste / narrative):
   {{description}}
 
-  Reference CDS examples (gold, working code retrieved from the knowledge base — mirror their style):
+  Reference material (guardrails + CDS examples retrieved from the knowledge base):
   {{reference_examples}}

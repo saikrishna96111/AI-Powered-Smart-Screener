@@ -6,10 +6,13 @@ class IntentSchema(BaseModel):
     intent: str = Field(
         description=(
             "A SHORT business-domain label for the SAP control the user described "
-            "(2-6 words). Examples: 'Duplicate vendor invoice check', "
-            "'GR/IR clearing exception', 'Vendor bank change vs payment', "
-            "'3-way match tolerance breach'. NEVER repeat the prompt instruction "
-            "or use phrases like 'name the control' or 'from user message'."
+            "(2-6 words). Derive ONLY from the user's message — do not assume "
+            "duplicate invoice, vendor invoice, or any default control if they "
+            "did not describe one. Examples (use only when they match what the "
+            "user said): 'PO creator approver SoD', 'GR/IR clearing exception', "
+            "'Vendor bank change vs payment', '3-way match tolerance breach'. "
+            "NEVER repeat the prompt instruction or use phrases like "
+            "'name the control' or 'from user message'."
         )
     )
     confidence: float = Field(

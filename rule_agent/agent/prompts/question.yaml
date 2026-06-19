@@ -22,7 +22,15 @@ system: |
   - Do not append `Reply yes` or `If that works…` INSIDE the backticks; put that prose AFTER.
 
   Other rules:
-  - Tailor table/default hints to the **control intent** fields above (duplicate invoice, GR/IR, etc.) — do not switch to a different control story.
+  - Do NOT ask about result grain, output layout, or "how each row shows up" unless
+    the user explicitly raised that topic — the CDS generator picks a sensible grain.
+  - Tailor hints and example values to the **control intent** above — use tables, fields,
+    and scenarios that match what the user is building. Stay domain-neutral unless the
+    intent clearly calls for a specific process (do not default to duplicate invoice,
+    vendor invoice, or BKPF/BSEG/RBKP/RSEG unless that is what they asked for).
+  - When the key is `key_tables`, the backticked example must list only tables relevant
+    to this control intent (comma-separated SAP table names). Never reuse a generic
+    FI/MM invoice table set unless the user is building an invoice control.
   - Do NOT ask about IDE, transport, APIs, or non-SAP tools.
   - Do NOT output CDS or ABAP code.
 

@@ -249,6 +249,34 @@ def _is_grain_slot_key(name: str) -> bool:
     return False
 
 
+def _user_explicitly_wants_grain_clarification(user_text: str) -> bool:
+    """True only when the user themselves raised result layout / grain — not by default."""
+    low = (user_text or "").lower()
+    needles = (
+        "output grain",
+        "result level",
+        "result layout",
+        "row level",
+        "how should each row",
+        "how each exception shows",
+        "review grain",
+        "what grain",
+        "which grain",
+        "one row per",
+        "exception grain",
+    )
+    return any(n in low for n in needles)
+
+
+def _filter_unnecessary_clarifications(
+    fields: list[str], user_text: str
+) -> list[str]:
+    """Drop result-grain / layout slots unless the user explicitly asked for that."""
+    if _user_explicitly_wants_grain_clarification(user_text):
+        return list(fields or [])
+    return [f for f in (fields or []) if not _is_grain_slot_key(f)]
+
+
 def _latest_ai_message_with_kv_example(messages) -> str:
     """Last assistant bubble that contains a key=value example (fallback if ordering confuses pairing)."""
     for m in reversed(messages or []):
@@ -948,9 +976,12 @@ def intent_node(state: dict):
             SystemMessage(
                 content=(
                     "You label the SAP S/4HANA exception/monitoring control the user wants to build. "
-                    "Reply ONLY with a short business label (2-6 words) that names the control type "
-                    "(e.g. 'Duplicate vendor invoice check', 'GR/IR clearing exception', "
-                    "'3-way match tolerance breach'). Do NOT repeat the instruction text, "
+                    "Reply ONLY with a short business label (2-6 words) taken from what the user "
+                    "actually described. Do NOT default to 'duplicate invoice' or vendor-invoice "
+                    "wording unless they explicitly asked for that control. "
+                    "Examples when they fit: 'PO creator approver SoD', 'GR/IR clearing exception', "
+                    "'3-way match tolerance breach'. "
+                    "Do NOT repeat the instruction text, "
                     "do NOT include phrases like 'name the control' or 'from user message'."
                 )
             ),
@@ -1009,12 +1040,21 @@ User message(s):
 CDS view parameters already declared (the backend will pass these at runtime):
 {parameters_summary}
 
-Return required_fields: 3–7 short names for facts still needed. Prefer these exact names when applicable:
+Return required_fields: up to 5 short names for facts still needed. Prefer these exact names when applicable:
 key_tables (tables/sources), exception_or_match_logic, time_window_days (or time_scope),
-amount_threshold, tolerance_percent, company_code_scope, output_grain, exclusions.
+amount_threshold, tolerance_percent, company_code_scope, exclusions.
+
+Do NOT include output_grain, result_level, result_layout, row_level, or any
+"how each row shows up" field — the CDS generator infers a sensible result grain
+from the control logic. Only plan a grain/layout field if the user explicitly
+asked about result layout AND their brief is genuinely ambiguous (rare).
 
 Always use the name key_tables for “which SAP tables drive this control” so confirmation examples match extraction.
 Include **at most one** tables-related field in required_fields — never list multiple synonyms (only key_tables).
+
+Ask the **minimum** number of clarifications — prefer an empty list when the brief
+already covers tables, exception logic, and thresholds. Do not pad with optional
+design questions.
 
 CRITICAL — do NOT plan a clarifying field for anything the user has already declared as a CDS view parameter:
 - The mandatory date_parameter ALWAYS supersedes any lookback / time-window question.
@@ -1035,6 +1075,7 @@ Do not ask about tools, transport, or non-SAP configuration."""
 
     planned = _normalize_required_fields(list(result.required_fields or []))
     filtered = _filter_required_fields_by_parameters(planned, cds_params)
+    filtered = _filter_unnecessary_clarifications(filtered, user_text)
     return {"required_fields": filtered}
 
 
@@ -1137,70 +1178,12 @@ def missing_node(state: dict):
 # -----------------------------
 
 
-KEY_TABLES_QUESTION_TEMPLATE = """You're building a CDS exception wrapper for: **{intent}**
-
-1️⃣ **Which SAP tables should this check read from?**
-*(Choose the minimum tables that hold the data you need. For duplicate invoices, teams often use MM invoices (**RBKP/RSEG**) and/or FI postings (**BKPF/BSEG**) depending on how invoices are posted.)*
-
-Reply in your own words with table names, or accept this example:
-
-`key_tables=BKPF,BSEG,RBKP,RSEG`
-
-Reply **yes** to use that example as-is."""
-
-EXCEPTION_OR_MATCH_LOGIC_TEMPLATE = """You're defining the exception logic for: **{intent}**
-
-1️⃣ **What should count as an exception or mismatch?**
-*(Say what belongs on the exception list — duplicate invoices, threshold breaches, missing links, etc.)*
-
-Reply in your own words first. You can also accept this concrete example:
-
-`{field_key}=Vendor invoice documents flagged when the same vendor (LIFNR), company code (BUKRS), invoice/reference field you use for matching (e.g. XBLNR or BELNR), currency (WAERS), and gross invoice amount (WRBTR or equivalent) occur together more than once within the posting time window`
-
-Reply **yes** to use that example as-is."""
-
-_EXCEPTION_LOGIC_KEYS = frozenset(
-    {"exception_or_match_logic", "exception_logic", "match_logic", "exception_rule"}
-)
-
-OUTPUT_GRAIN_QUESTION_TEMPLATE = """You're shaping the result layout for: **{intent}**
-
-1️⃣ **Result level (how each exception shows up)**
-*(Pick one business grain — company code, document, line item, vendor + invoice, etc.)*
-
-Reply in your own words first, or accept this example:
-
-`{field_key}=One row per accounting document line item`
-
-Reply **yes** to use that example as-is."""
-
-
 def question_node(state: dict):
 
     if not state["missing_fields"]:
         return {}
 
     next_key = state["missing_fields"][0]
-    # Deterministic copy avoids LLM drift ("payments without PO", vague intros) and keeps key_tables= parsable.
-    if next_key == "key_tables":
-        intent_txt = (state.get("intent") or "your SAP monitoring control").strip()
-        body = KEY_TABLES_QUESTION_TEMPLATE.format(intent=intent_txt)
-        return {"messages": [AIMessage(content=body)]}
-
-    if next_key in _EXCEPTION_LOGIC_KEYS:
-        intent_txt = (state.get("intent") or "your SAP monitoring control").strip()
-        # Example line must use the same snake_case key as the planner (yes-extraction matches this).
-        body = EXCEPTION_OR_MATCH_LOGIC_TEMPLATE.format(
-            intent=intent_txt, field_key=next_key
-        )
-        return {"messages": [AIMessage(content=body)]}
-
-    if _is_grain_slot_key(next_key):
-        intent_txt = (state.get("intent") or "your SAP monitoring control").strip()
-        body = OUTPUT_GRAIN_QUESTION_TEMPLATE.format(
-            intent=intent_txt, field_key=next_key
-        )
-        return {"messages": [AIMessage(content=body)]}
 
     data = load_prompt("question")
     lines = f"1. {next_key}"
@@ -1373,6 +1356,20 @@ def approval_node(state: dict):
 # CDS COMPANION ARTIFACT HELPERS
 # (baseinfo JSON + abapGit DDLS XML written next to every generated view)
 # -----------------------------
+# Shared artefact naming: the CDS view, SRVD, and SRVB use the same ``ZAI_*``
+# object name.  Each on-disk filename (name + extension) must be <= 25 chars;
+# ``.ddls.asddls`` is the tightest extension (11 chars) → object name <= 14.
+ARTIFACT_FILENAME_MAX_LEN = 25
+ARTIFACT_NAME_MAX_LEN = 14
+
+
+def _normalize_zai_artifact_name(name: str) -> str:
+    """Uppercase ``ZAI_*`` object name shared by CDS / SRVD / SRVB artefacts."""
+    raw = re.sub(r"[^A-Za-z0-9_]+", "_", (name or "").strip()).strip("_") or "ZAI_GENERATED"
+    upper = raw.upper()
+    if not upper.startswith("ZAI_"):
+        upper = f"ZAI_{upper.lstrip('_')}"
+    return upper[:ARTIFACT_NAME_MAX_LEN]
 
 
 def _strip_cds_comments(cds_code: str) -> str:
@@ -1526,45 +1523,33 @@ def _build_baseinfo_json(tables: list[str]) -> str:
     )
 
 
-def _derive_service_names(ddl_name: str) -> tuple[str, str]:
-    """Derive RAP service-definition and service-binding names from a CDS DDL name.
-
-    Convention used here:
-      * Replace the leading ``ZAI_`` prefix with ``ZSD_`` for the service definition.
-      * Replace the leading ``ZAI_`` prefix with ``ZSB_`` for the service binding.
-      * If the DDL name does not start with ``ZAI_``, prepend ``ZSD_`` / ``ZSB_``.
-
-    The resulting names follow the same length envelope as the CDS view name
-    (CDS views are <=20 chars; ZAI_ / ZSD_ / ZSB_ are all 4-char prefixes), so
-    they always fit within ABAP's 30-char object-name limit.
-    """
-    name = (ddl_name or "").strip() or "ZAI_GENERATED"
-    if name.upper().startswith("ZAI_"):
-        stem = name[4:]
-        srvd = f"ZSD_{stem}"
-        srvb = f"ZSB_{stem}"
-    else:
-        srvd = f"ZSD_{name}"
-        srvb = f"ZSB_{name}"
-    return srvd[:30], srvb[:30]
-
-
-def _build_service_definition_text(
+def _build_service_definition_xml(
     service_def_name: str,
     ddl_name: str,
-    ddtext: str,
+    description: str,
 ) -> str:
-    """ABAP RAP service-definition source (`.srvd.srvd`).
+    """ADT service-definition metadata (``.srvd.xml``).
 
-    Exposes the generated CDS view as a single entity so the service binding
-    below can pick it up under the OData V4 UI protocol.
+    Exposes the generated CDS view as a single entity for the service binding.
     """
-    safe_label = (ddtext or "Generated CDS Service")[:60].replace("'", " ")
+    safe_name = _xml_escape(service_def_name)
+    safe_desc = _xml_escape(description)
+    safe_entity = _xml_escape(ddl_name)
     return (
-        f"@EndUserText.label: '{safe_label}'\n"
-        f"define service {service_def_name} {{\n"
-        f"  expose {ddl_name};\n"
-        f"}}\n"
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        f'<abap:serviceDefinition\n'
+        f'    xmlns:abap="http://www.sap.com/adt/ddic/ddls"\n'
+        f'    name="{safe_name}">\n'
+        '\n'
+        f'    <description>{safe_desc}</description>\n'
+        '\n'
+        '    <exposedEntities>\n'
+        '        <entity\n'
+        f'            name="{safe_entity}"\n'
+        f'            cdsView="{safe_entity}"/>\n'
+        '    </exposedEntities>\n'
+        '\n'
+        '</abap:serviceDefinition>\n'
     )
 
 
@@ -1658,12 +1643,6 @@ def _build_abapgit_ddls_xml(ddl_name: str, ddtext: str) -> str:
     )
 
 
-def _safe_object_stem(name: str, fallback: str) -> str:
-    """Lowercase, filesystem-safe stem for an ABAP object name (used as filename prefix)."""
-    safe = re.sub(r"[^A-Za-z0-9_]+", "_", name or fallback).strip("_") or fallback
-    return safe.lower()
-
-
 def _write_cds_artifacts(
     ddl_name: str,
     cds_code: str,
@@ -1677,20 +1656,18 @@ def _write_cds_artifacts(
 ) -> str | None:
     """Write all companion files into ./generated_cds/<ddl_name>/. Returns the dir, or None on error.
 
-    File names are always lower-cased per the S/4HANA 2025 guardrails
-    (zai_dupl_inv1.ddls, etc.). The folder name preserves the original case
-    of the DDL identifier so it lines up with how it appears in ADT. The
-    service-definition / service-binding files use their own object names
-    as the file stem (e.g. ``zsd_dupl_inv1.srvd.srvd``).
+    File names are always lower-cased per the S/4HANA 2025 guardrails.
+    The CDS view, SRVD, and SRVB share the same ``ZAI_*`` object name stem
+    (e.g. ``zai_po_cr_app.ddls.asddls``, ``zai_po_cr_app.srvd.xml``,
+    ``zai_po_cr_app.srvb.srvb``). Each filename including its extension
+    must be <= 25 characters.
     """
-    safe_name = re.sub(r"[^A-Za-z0-9_]+", "_", ddl_name or "ZAI_GENERATED").strip("_") or "ZAI_GENERATED"
-    file_stem = safe_name.lower()
-    srvd_stem = _safe_object_stem(service_def_name, "zsd_generated")
-    srvb_stem = _safe_object_stem(service_binding_name, "zsb_generated")
+    artifact_name = _normalize_zai_artifact_name(ddl_name)
+    file_stem = artifact_name.lower()
     base_root = os.path.abspath(
         os.path.join(os.getcwd(), "generated_cds")
     )
-    out_dir = os.path.join(base_root, safe_name)
+    out_dir = os.path.join(base_root, artifact_name)
     try:
         os.makedirs(out_dir, exist_ok=True)
         with open(
@@ -1718,13 +1695,13 @@ def _write_cds_artifacts(
         ) as f:
             f.write(parameters_text or "")
         with open(
-            os.path.join(out_dir, f"{srvd_stem}.srvd.srvd"),
+            os.path.join(out_dir, f"{file_stem}.srvd.xml"),
             "w",
             encoding="utf-8",
         ) as f:
             f.write(service_def_text or "")
         with open(
-            os.path.join(out_dir, f"{srvb_stem}.srvb.srvb"),
+            os.path.join(out_dir, f"{file_stem}.srvb.srvb"),
             "w",
             encoding="utf-8",
         ) as f:
@@ -1746,16 +1723,20 @@ def _build_cds_artifacts(
     written to the ``.parameters`` file. The service-definition /
     service-binding artefacts implement the RAP V4-UI exposure of the view.
     """
-    ddl_name = _extract_ddl_name(cds_code) or "ZAI_GeneratedView"
+    ddl_name = _normalize_zai_artifact_name(
+        _extract_ddl_name(cds_code) or "ZAI_GENERATED"
+    )
     tables = _extract_from_tables(cds_code)
     ddtext = _extract_ddtext(cds_code) or (intent or "Generated CDS view")
     baseinfo_text = _build_baseinfo_json(tables)
     xml_text = _build_abapgit_ddls_xml(ddl_name, ddtext)
     parameters = _extract_cds_parameters(cds_code)
     parameters_text = _build_parameters_json(parameters, ddl_name)
-    service_def_name, service_binding_name = _derive_service_names(ddl_name)
-    service_def_text = _build_service_definition_text(
-        service_def_name, ddl_name, ddtext
+    service_def_name = ddl_name
+    service_binding_name = ddl_name
+    service_description = ddtext
+    service_def_text = _build_service_definition_xml(
+        service_def_name, ddl_name, service_description
     )
     service_binding_text = _build_service_binding_xml(
         service_binding_name, service_def_name, ddtext
@@ -1790,7 +1771,11 @@ def retrieve_examples_node(state: dict):
         return {}
 
     try:
-        from .retrieval import retrieve_reference_examples, index_status
+        from .retrieval import (
+            load_cds_guardrails_text,
+            retrieve_reference_examples,
+            index_status,
+        )
     except Exception as exc:
         print(f"[retrieve_examples_node] retrieval import failed: {exc}")
         return {
@@ -1799,23 +1784,18 @@ def retrieve_examples_node(state: dict):
         }
 
     status = index_status()
+    guidelines_loaded = bool(load_cds_guardrails_text())
     if not status.get("exists") or status.get("chunks", 0) <= 0:
         print(
             f"[retrieve_examples_node] vector store empty at {status.get('persist_dir')}; "
-            f"skipping retrieval. Run error_handling_agent/scripts/build_index.py to populate."
+            f"using guardrails from disk only. "
+            f"Run error_handling_agent/scripts/build_index.py to populate examples."
         )
-        return {
-            "reference_examples_text": (
-                "(no reference examples available — "
-                "run error_handling_agent/scripts/build_index.py to populate the index)"
-            ),
-            "reference_examples_meta": [],
-        }
 
     intent_text = (state.get("intent") or "").strip()
     description = _all_user_text(state.get("messages", []))
     query = (
-        f"Generate an ABAP CDS view for: {intent_text}.\n"
+        f"S/4HANA 2025 ABAP CDS guardrails and exception view for: {intent_text}.\n"
         f"Business brief:\n{description[:1500]}"
     )
 
@@ -1823,6 +1803,7 @@ def retrieve_examples_node(state: dict):
         docs, text_block = retrieve_reference_examples(
             query,
             k_examples=2,
+            k_guidelines=2,
             k_other=2,
         )
     except Exception as exc:
@@ -1833,6 +1814,14 @@ def retrieve_examples_node(state: dict):
         }
 
     meta_summary: list[dict] = []
+    if guidelines_loaded:
+        meta_summary.append(
+            {
+                "source_name": "cds_guardrails",
+                "source_type": "guideline",
+                "source": "disk:cds_guardrails.txt",
+            }
+        )
     for d in docs:
         m = d.metadata or {}
         meta_summary.append(
@@ -1844,9 +1833,10 @@ def retrieve_examples_node(state: dict):
         )
 
     print(
-        f"[retrieve_examples_node] retrieved {len(docs)} doc(s); "
-        f"examples={sum(1 for m in meta_summary if m['source_type'] == 'example')}, "
-        f"others={sum(1 for m in meta_summary if m['source_type'] != 'example')}"
+        f"[retrieve_examples_node] guardrails={'yes' if guidelines_loaded else 'no'}, "
+        f"retrieved {len(docs)} indexed doc(s); "
+        f"examples={sum(1 for m in meta_summary if m.get('source_type') == 'example')}, "
+        f"guidelines={sum(1 for m in meta_summary if m.get('source_type') == 'guideline')}"
     )
 
     return {
@@ -1925,7 +1915,7 @@ def cds_node(state: dict):
         f"\n\n`{ddl_name}.baseinfo`\n\n```json\n{baseinfo_text}\n```\n\n"
         f"`{ddl_name}.ddls.xml`\n\n```xml\n{xml_text}```\n\n"
         f"`{ddl_name}.parameters`\n\n```json\n{parameters_text}\n```\n\n"
-        f"`{service_def_name}.srvd.srvd`\n\n```abap\n{service_def_text}```\n\n"
+        f"`{service_def_name}.srvd.xml`\n\n```xml\n{service_def_text}```\n\n"
         f"`{service_binding_name}.srvb.srvb`\n\n```xml\n{service_binding_text}```"
     )
 
@@ -2134,7 +2124,7 @@ def syntax_review_node(state: dict):
             + f"\n\n`{ddl_name}.baseinfo`\n\n```json\n{baseinfo_text}\n```\n\n"
             f"`{ddl_name}.ddls.xml`\n\n```xml\n{xml_text}```\n\n"
             f"`{ddl_name}.parameters`\n\n```json\n{parameters_text}\n```\n\n"
-            f"`{service_def_name}.srvd.srvd`\n\n```abap\n{service_def_text}```\n\n"
+            f"`{service_def_name}.srvd.xml`\n\n```xml\n{service_def_text}```\n\n"
             f"`{service_binding_name}.srvb.srvb`\n\n```xml\n{service_binding_text}```"
         )
 
@@ -2265,7 +2255,7 @@ def cds_review_node(state: dict):
             + f"\n\n`{ddl_name}.baseinfo`\n\n```json\n{baseinfo_text}\n```\n\n"
             f"`{ddl_name}.ddls.xml`\n\n```xml\n{xml_text}```\n\n"
             f"`{ddl_name}.parameters`\n\n```json\n{parameters_text}\n```\n\n"
-            f"`{service_def_name}.srvd.srvd`\n\n```abap\n{service_def_text}```\n\n"
+            f"`{service_def_name}.srvd.xml`\n\n```xml\n{service_def_text}```\n\n"
             f"`{service_binding_name}.srvb.srvb`\n\n```xml\n{service_binding_text}```"
         )
 

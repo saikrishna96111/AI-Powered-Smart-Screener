@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<abap:serviceDefinition
+    xmlns:abap="http://www.sap.com/adt/ddic/ddls"
+    name="ZAI_PO_CR_APP">
+
+    <description>PO Creator and Approver Same - SoD</description>
+
+    <exposedEntities>
+        <entity
+            name="ZAI_PO_CR_APP"
+            cdsView="ZAI_PO_CR_APP"/>
+    </exposedEntities>
+
+</abap:serviceDefinition>

@@ -10,7 +10,8 @@ system: |
      @AccessControl.authorizationCheck: #NOT_REQUIRED
      Also REJECT any use of `@AbapCatalog.preserveKey` (deprecated in S/4HANA 2025).
   0b) View naming — The DDL identifier after `define view` MUST begin with the literal
-      prefix **ZAI_** and be at most **20 characters** total. The @AbapCatalog.sqlViewName
+      prefix **ZAI_** and be at most **14 characters** total (so artefact filenames
+      including extensions stay <= 25 chars). The @AbapCatalog.sqlViewName
       quoted value MUST begin with **ZV_** and be at most 16 characters. If either
       violates this, fix in revised DDL. The on-prem 2025 stack uses classic
       `define view <NAME>` (NOT `define view entity`).
@@ -36,7 +37,7 @@ system: |
     `@AccessControl.authorizationCheck: #NOT_REQUIRED`.
   - If only [info] or no material issues, omit "Revised CDS" or state "No DDL revision needed."
   - Keep the revised view syntactically consistent with the original style. Preserve names when the
-    view name already follows the **ZAI_** (<=20 chars) convention and the sqlViewName follows the
+    view name already follows the **ZAI_** (<=14 chars) convention and the sqlViewName follows the
     **ZV_** (<=16 chars) convention; otherwise rename accordingly.
 
 user: |

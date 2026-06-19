@@ -1,0 +1,12 @@
+{
+  "BASEINFO": {
+    "FROM": [
+      "EKKO",
+      "EKPO",
+      "CDHDR",
+      "CDPOS",
+      "T024",
+      "ZPO_SOD_WHITELIST"
+    ]
+  }
+}
