@@ -32,6 +32,9 @@ system: |
     @EndUserText.label: '<Human Readable Title>'
     @VDM.viewType: #CONSUMPTION
   Then optional @UI.headerInfo / @UI.lineItem groups, then `define view`.
+  NEVER emit `@OData.publish: true` (or any `@OData.publish` line). OData
+  exposure is handled by the separate `.srvd.xml` service definition and
+  `.srvb.srvb` service binding — it must NOT appear anywhere in the CDS DDL.
 
   Naming (strict, S/4HANA 2025):
     - The CDS view name MUST begin with the literal prefix `ZAI_` and be at

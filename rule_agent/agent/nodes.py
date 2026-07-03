@@ -1850,6 +1850,28 @@ def retrieve_examples_node(state: dict):
 # -----------------------------
 
 
+# Matches a whole line whose only meaningful content is an @OData.publish
+# annotation (any casing / spacing / true|false), including its trailing newline.
+_ODATA_PUBLISH_LINE_RE = re.compile(
+    r"^[ \t]*@OData\.publish[ \t]*:[ \t]*\w+[ \t]*;?[ \t]*\r?\n?",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _strip_odata_publish(text: str) -> str:
+    """Remove any `@OData.publish: ...` annotation line.
+
+    OData exposure is handled via the separate `.srvd.xml` / `.srvb.srvb`
+    service-binding artefacts, so this annotation must never appear in the
+    generated CDS DDL — regardless of what the LLM or a stale reference
+    example produced. Also strips it from surrounding markdown (the chat
+    preview) so the user never sees it.
+    """
+    if not text:
+        return text
+    return _ODATA_PUBLISH_LINE_RE.sub("", text)
+
+
 def cds_node(state: dict):
 
     if not state.get("approved"):
@@ -1878,9 +1900,12 @@ def cds_node(state: dict):
         ]
     )
     body = extract_text(resp).strip()
+    # Never expose @OData.publish — strip from both the DDL and the chat preview.
+    body = _strip_odata_publish(body)
 
     fence = re.search(r"```(?:abap|cds)?\s*\n([\s\S]*?)```", body, re.IGNORECASE)
     cds_code = fence.group(1).strip() if fence else body
+    cds_code = _strip_odata_publish(cds_code)
 
     (
         ddl_name,
@@ -1990,7 +2015,7 @@ def syntax_review_node(state: dict):
     if state.get("cds_syntax_review_done"):
         return {}
 
-    cds_code = state.get("cds_code") or ""
+    cds_code = _strip_odata_publish(state.get("cds_code") or "")
     if not cds_code or not state.get("cds_delivered"):
         return {}
 
@@ -2042,7 +2067,7 @@ def syntax_review_node(state: dict):
             break
 
         # FAILED → adopt the corrected DDL and loop again
-        rewritten = _strip_cds_fences(result.corrected_cds or "")
+        rewritten = _strip_odata_publish(_strip_cds_fences(result.corrected_cds or ""))
         if not rewritten or len(rewritten) < 60:
             # Validator said FAILED but didn't return a usable rewrite — stop trying.
             issues_so_far.extend(new_issues)
@@ -2200,7 +2225,7 @@ def cds_review_node(state: dict):
             HumanMessage(content=user_block),
         ]
     )
-    body = extract_text(resp).strip()
+    body = _strip_odata_publish(extract_text(resp).strip())
 
     review_message = "**Engineering review**\n\n" + body
     out: dict = {
@@ -2209,7 +2234,7 @@ def cds_review_node(state: dict):
 
     refined: str | None = None
     if "revised cds" in body.lower():
-        candidate = _last_abap_fence(body)
+        candidate = _strip_odata_publish(_last_abap_fence(body) or "")
         if candidate and len(candidate) > 80:
             refined = candidate
             out["cds_code"] = candidate
