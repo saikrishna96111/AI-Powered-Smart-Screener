@@ -1593,6 +1593,69 @@ def _build_service_binding_xml(
     )
 
 
+def _build_service_definition_source(
+    service_def_name: str,
+    ddl_name: str,
+    description: str,
+) -> str:
+    """ADT service-definition DDL source (``.srvd.srvdsrv``).
+
+    The classic ``define service`` block that exposes the generated CDS view,
+    e.g. ``define service ZAI_PO_CR_APP { expose ZAI_PO_CR_APP; }``. This is the
+    editable source counterpart to the ``.srvd.xml`` metadata file.
+    """
+    label = (description or "Generated CDS Service")[:60]
+    label = label.replace("'", "")
+    return (
+        f"@EndUserText.label: '{label}'\n"
+        f"define service {service_def_name} {{\n"
+        f"  expose {ddl_name};\n"
+        f"}}\n"
+    )
+
+
+def _build_g4ba_xml(group_id: str, description: str) -> str:
+    """abapGit OData V4 service-group binding (``.g4ba.xml``).
+
+    Mirrors the ``LCL_OBJECT_G4BA`` serializer format: registers the service
+    binding group with the SAP Gateway (``/IWBEP/COMMON``, GWBEP version 040).
+    """
+    safe_group = _xml_escape(group_id or "ZAI_GENERATED")
+    safe_desc = _xml_escape((description or group_id or "Generated Service Group")[:60])
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<abapGit version="v1.0.0" serializer="LCL_OBJECT_G4BA" serializer_version="v1.0.0">\n'
+        ' <asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">\n'
+        '  <asx:values>\n'
+        '   <_-IWBEP_-I_V4_MSGA>\n'
+        '    <_-IWBEP_-I_V4_MSGA>\n'
+        f'     <GROUP_ID>{safe_group}</GROUP_ID>\n'
+        '     <SERVICE_ID>/IWBEP/COMMON</SERVICE_ID>\n'
+        '     <REPOSITORY_ID>DEFAULT</REPOSITORY_ID>\n'
+        '     <GWBEP_VERSION>040</GWBEP_VERSION>\n'
+        '    </_-IWBEP_-I_V4_MSGA>\n'
+        '   </_-IWBEP_-I_V4_MSGA>\n'
+        '   <_-IWBEP_-I_V4_MSGR>\n'
+        '    <_-IWBEP_-I_V4_MSGR>\n'
+        f'     <GROUP_ID>{safe_group}</GROUP_ID>\n'
+        '     <GWBEP_VERSION>040</GWBEP_VERSION>\n'
+        '     <ASSIGNMENT_REPO_ID>SADL</ASSIGNMENT_REPO_ID>\n'
+        f'     <EXTERNAL_GROUP_ID>{safe_group}</EXTERNAL_GROUP_ID>\n'
+        '    </_-IWBEP_-I_V4_MSGR>\n'
+        '   </_-IWBEP_-I_V4_MSGR>\n'
+        '   <_-IWBEP_-I_V4_MSGT>\n'
+        '    <_-IWBEP_-I_V4_MSGT>\n'
+        f'     <GROUP_ID>{safe_group}</GROUP_ID>\n'
+        '     <LANGUAGE>E</LANGUAGE>\n'
+        f'     <DESCRIPTION>{safe_desc}</DESCRIPTION>\n'
+        '    </_-IWBEP_-I_V4_MSGT>\n'
+        '   </_-IWBEP_-I_V4_MSGT>\n'
+        '  </asx:values>\n'
+        ' </asx:abap>\n'
+        '</abapGit>\n'
+    )
+
+
 def _build_parameters_json(parameters: list[dict], ddl_name: str) -> str:
     """JSON payload the backend reads to know which values to send to the CDS view.
 
@@ -1653,14 +1716,25 @@ def _write_cds_artifacts(
     service_def_text: str,
     service_binding_name: str,
     service_binding_text: str,
+    service_def_source_text: str = "",
+    g4ba_text: str = "",
 ) -> str | None:
     """Write all companion files into ./generated_cds/<ddl_name>/. Returns the dir, or None on error.
 
     File names are always lower-cased per the S/4HANA 2025 guardrails.
-    The CDS view, SRVD, and SRVB share the same ``ZAI_*`` object name stem
-    (e.g. ``zai_po_cr_app.ddls.asddls``, ``zai_po_cr_app.srvd.xml``,
-    ``zai_po_cr_app.srvb.srvb``). Each filename including its extension
-    must be <= 25 characters.
+    The CDS view, SRVD, SRVB, and G4BA share the same ``ZAI_*`` object name
+    stem. Eight artefacts are emitted per view:
+
+        <name>.ddls.asddls    CDS DDL source
+        <name>.ddls.baseinfo  ADT base info
+        <name>.ddls.xml       abapGit DDLS descriptor
+        <name>.parameters     view parameters (JSON)
+        <name>.srvd.srvdsrv   service definition source (define service ...)
+        <name>.srvd.xml       service definition metadata
+        <name>.srvb.xml       service binding
+        <name>.g4ba.xml       OData V4 gateway service-group binding
+
+    Each filename including its extension must be <= 25 characters.
     """
     artifact_name = _normalize_zai_artifact_name(ddl_name)
     file_stem = artifact_name.lower()
@@ -1668,44 +1742,21 @@ def _write_cds_artifacts(
         os.path.join(os.getcwd(), "generated_cds")
     )
     out_dir = os.path.join(base_root, artifact_name)
+    files: list[tuple[str, str]] = [
+        (f"{file_stem}.ddls.asddls", cds_code or ""),
+        (f"{file_stem}.ddls.baseinfo", baseinfo_text or ""),
+        (f"{file_stem}.ddls.xml", xml_text or ""),
+        (f"{file_stem}.parameters", parameters_text or ""),
+        (f"{file_stem}.srvd.srvdsrv", service_def_source_text or ""),
+        (f"{file_stem}.srvd.xml", service_def_text or ""),
+        (f"{file_stem}.srvb.xml", service_binding_text or ""),
+        (f"{file_stem}.g4ba.xml", g4ba_text or ""),
+    ]
     try:
         os.makedirs(out_dir, exist_ok=True)
-        with open(
-            os.path.join(out_dir, f"{file_stem}.ddls.asddls"),
-            "w",
-            encoding="utf-8",
-        ) as f:
-            f.write(cds_code or "")
-        with open(
-            os.path.join(out_dir, f"{file_stem}.baseinfo"),
-            "w",
-            encoding="utf-8",
-        ) as f:
-            f.write(baseinfo_text or "")
-        with open(
-            os.path.join(out_dir, f"{file_stem}.ddls.xml"),
-            "w",
-            encoding="utf-8",
-        ) as f:
-            f.write(xml_text or "")
-        with open(
-            os.path.join(out_dir, f"{file_stem}.parameters"),
-            "w",
-            encoding="utf-8",
-        ) as f:
-            f.write(parameters_text or "")
-        with open(
-            os.path.join(out_dir, f"{file_stem}.srvd.xml"),
-            "w",
-            encoding="utf-8",
-        ) as f:
-            f.write(service_def_text or "")
-        with open(
-            os.path.join(out_dir, f"{file_stem}.srvb.srvb"),
-            "w",
-            encoding="utf-8",
-        ) as f:
-            f.write(service_binding_text or "")
+        for filename, content in files:
+            with open(os.path.join(out_dir, filename), "w", encoding="utf-8") as f:
+                f.write(content)
     except OSError:
         return None
     return out_dir
@@ -1713,15 +1764,19 @@ def _write_cds_artifacts(
 
 def _build_cds_artifacts(
     cds_code: str, intent: str
-) -> tuple[str, list[str], str, str, str, list[dict], str, str, str, str]:
+) -> tuple[str, list[str], str, str, str, list[dict], str, str, str, str, str, str]:
     """Build every companion artefact derived from the generated CDS code.
 
     Returns ``(ddl_name, tables, baseinfo_text, xml_text, parameters_text,
     parameters, service_def_name, service_def_text, service_binding_name,
-    service_binding_text)``. ``parameters`` is the structured list parsed
-    out of the ``with parameters`` clause; ``parameters_text`` is the JSON
-    written to the ``.parameters`` file. The service-definition /
-    service-binding artefacts implement the RAP V4-UI exposure of the view.
+    service_binding_text, service_def_source_text, g4ba_text)``.
+    ``parameters`` is the structured list parsed out of the ``with parameters``
+    clause; ``parameters_text`` is the JSON written to the ``.parameters`` file.
+    The service-definition / service-binding artefacts implement the RAP V4-UI
+    exposure of the view: ``service_def_source_text`` is the ``.srvd.srvdsrv``
+    DDL source, ``service_def_text`` the ``.srvd.xml`` metadata,
+    ``service_binding_text`` the ``.srvb.xml`` binding, and ``g4ba_text`` the
+    ``.g4ba.xml`` gateway service-group binding.
     """
     ddl_name = _normalize_zai_artifact_name(
         _extract_ddl_name(cds_code) or "ZAI_GENERATED"
@@ -1738,9 +1793,13 @@ def _build_cds_artifacts(
     service_def_text = _build_service_definition_xml(
         service_def_name, ddl_name, service_description
     )
+    service_def_source_text = _build_service_definition_source(
+        service_def_name, ddl_name, service_description
+    )
     service_binding_text = _build_service_binding_xml(
         service_binding_name, service_def_name, ddtext
     )
+    g4ba_text = _build_g4ba_xml(service_binding_name, ddtext)
     return (
         ddl_name,
         tables,
@@ -1752,6 +1811,8 @@ def _build_cds_artifacts(
         service_def_text,
         service_binding_name,
         service_binding_text,
+        service_def_source_text,
+        g4ba_text,
     )
 
 
@@ -1918,6 +1979,8 @@ def cds_node(state: dict):
         service_def_text,
         service_binding_name,
         service_binding_text,
+        service_def_source_text,
+        g4ba_text,
     ) = _build_cds_artifacts(cds_code, state.get("intent") or "")
     out_dir = _write_cds_artifacts(
         ddl_name,
@@ -1929,6 +1992,8 @@ def cds_node(state: dict):
         service_def_text,
         service_binding_name,
         service_binding_text,
+        service_def_source_text,
+        g4ba_text,
     )
 
     artifacts_block = (
@@ -1937,11 +2002,13 @@ def cds_node(state: dict):
         else "\n\n---\n\n**Companion artifacts** (could not write to disk — copy manually)"
     )
     artifacts_block += (
-        f"\n\n`{ddl_name}.baseinfo`\n\n```json\n{baseinfo_text}\n```\n\n"
+        f"\n\n`{ddl_name}.ddls.baseinfo`\n\n```json\n{baseinfo_text}\n```\n\n"
         f"`{ddl_name}.ddls.xml`\n\n```xml\n{xml_text}```\n\n"
         f"`{ddl_name}.parameters`\n\n```json\n{parameters_text}\n```\n\n"
+        f"`{service_def_name}.srvd.srvdsrv`\n\n```abap\n{service_def_source_text}```\n\n"
         f"`{service_def_name}.srvd.xml`\n\n```xml\n{service_def_text}```\n\n"
-        f"`{service_binding_name}.srvb.srvb`\n\n```xml\n{service_binding_text}```"
+        f"`{service_binding_name}.srvb.xml`\n\n```xml\n{service_binding_text}```\n\n"
+        f"`{service_binding_name}.g4ba.xml`\n\n```xml\n{g4ba_text}```"
     )
 
     confirmation = (
@@ -1960,8 +2027,10 @@ def cds_node(state: dict):
         "cds_parameters": parameters,
         "cds_service_def_name": service_def_name,
         "cds_service_def_text": service_def_text,
+        "cds_service_def_source_text": service_def_source_text,
         "cds_service_binding_name": service_binding_name,
         "cds_service_binding_text": service_binding_text,
+        "cds_g4ba_text": g4ba_text,
         "cds_artifacts_dir": out_dir,
     }
 
@@ -2093,6 +2162,8 @@ def syntax_review_node(state: dict):
         service_def_text,
         service_binding_name,
         service_binding_text,
+        service_def_source_text,
+        g4ba_text,
     ) = _build_cds_artifacts(cds_code, intent)
     out_dir = _write_cds_artifacts(
         ddl_name,
@@ -2104,6 +2175,8 @@ def syntax_review_node(state: dict):
         service_def_text,
         service_binding_name,
         service_binding_text,
+        service_def_source_text,
+        g4ba_text,
     )
 
     # Build the user-facing summary
@@ -2146,11 +2219,13 @@ def syntax_review_node(state: dict):
         revised_block += (
             f"\n\n**Updated companion artifacts** "
             + (f"(rewritten in `{out_dir}`)" if out_dir else "(disk write failed)")
-            + f"\n\n`{ddl_name}.baseinfo`\n\n```json\n{baseinfo_text}\n```\n\n"
+            + f"\n\n`{ddl_name}.ddls.baseinfo`\n\n```json\n{baseinfo_text}\n```\n\n"
             f"`{ddl_name}.ddls.xml`\n\n```xml\n{xml_text}```\n\n"
             f"`{ddl_name}.parameters`\n\n```json\n{parameters_text}\n```\n\n"
+            f"`{service_def_name}.srvd.srvdsrv`\n\n```abap\n{service_def_source_text}```\n\n"
             f"`{service_def_name}.srvd.xml`\n\n```xml\n{service_def_text}```\n\n"
-            f"`{service_binding_name}.srvb.srvb`\n\n```xml\n{service_binding_text}```"
+            f"`{service_binding_name}.srvb.xml`\n\n```xml\n{service_binding_text}```\n\n"
+            f"`{service_binding_name}.g4ba.xml`\n\n```xml\n{g4ba_text}```"
         )
 
     message = header + issues_block + revised_block
@@ -2172,8 +2247,10 @@ def syntax_review_node(state: dict):
         out["cds_parameters"] = parameters
         out["cds_service_def_name"] = service_def_name
         out["cds_service_def_text"] = service_def_text
+        out["cds_service_def_source_text"] = service_def_source_text
         out["cds_service_binding_name"] = service_binding_name
         out["cds_service_binding_text"] = service_binding_text
+        out["cds_g4ba_text"] = g4ba_text
         out["cds_artifacts_dir"] = out_dir
 
     return out
@@ -2252,6 +2329,8 @@ def cds_review_node(state: dict):
             service_def_text,
             service_binding_name,
             service_binding_text,
+            service_def_source_text,
+            g4ba_text,
         ) = _build_cds_artifacts(refined, state.get("intent") or "")
         out_dir = _write_cds_artifacts(
             ddl_name,
@@ -2263,6 +2342,8 @@ def cds_review_node(state: dict):
             service_def_text,
             service_binding_name,
             service_binding_text,
+            service_def_source_text,
+            g4ba_text,
         )
         out["cds_ddl_name"] = ddl_name
         out["cds_baseinfo"] = baseinfo_text
@@ -2271,17 +2352,21 @@ def cds_review_node(state: dict):
         out["cds_parameters"] = parameters
         out["cds_service_def_name"] = service_def_name
         out["cds_service_def_text"] = service_def_text
+        out["cds_service_def_source_text"] = service_def_source_text
         out["cds_service_binding_name"] = service_binding_name
         out["cds_service_binding_text"] = service_binding_text
+        out["cds_g4ba_text"] = g4ba_text
         out["cds_artifacts_dir"] = out_dir
         review_message += (
             f"\n\n---\n\n**Revised companion artifacts** "
             + (f"(updated in `{out_dir}`)" if out_dir else "(disk write failed)")
-            + f"\n\n`{ddl_name}.baseinfo`\n\n```json\n{baseinfo_text}\n```\n\n"
+            + f"\n\n`{ddl_name}.ddls.baseinfo`\n\n```json\n{baseinfo_text}\n```\n\n"
             f"`{ddl_name}.ddls.xml`\n\n```xml\n{xml_text}```\n\n"
             f"`{ddl_name}.parameters`\n\n```json\n{parameters_text}\n```\n\n"
+            f"`{service_def_name}.srvd.srvdsrv`\n\n```abap\n{service_def_source_text}```\n\n"
             f"`{service_def_name}.srvd.xml`\n\n```xml\n{service_def_text}```\n\n"
-            f"`{service_binding_name}.srvb.srvb`\n\n```xml\n{service_binding_text}```"
+            f"`{service_binding_name}.srvb.xml`\n\n```xml\n{service_binding_text}```\n\n"
+            f"`{service_binding_name}.g4ba.xml`\n\n```xml\n{g4ba_text}```"
         )
 
     out["messages"] = [AIMessage(content=review_message)]
