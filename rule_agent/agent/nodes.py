@@ -1356,20 +1356,41 @@ def approval_node(state: dict):
 # CDS COMPANION ARTIFACT HELPERS
 # (baseinfo JSON + abapGit DDLS XML written next to every generated view)
 # -----------------------------
-# Shared artefact naming: the CDS view, SRVD, and SRVB use the same ``ZAI_*``
-# object name.  Each on-disk filename (name + extension) must be <= 25 chars;
-# ``.ddls.asddls`` is the tightest extension (11 chars) → object name <= 14.
+# Entity naming — all artefacts use the ``ZAI_*`` prefix; service entities
+# are distinguished by suffix:
+#   CDS view            → ZAI_PO_CR_APP
+#   Service definition  → ZAI_PO_CR_APP_SERVICED
+#   Service binding     → ZAI_PO_CR_APP_SERVICEB
+# CDS view object name is at most 14 characters (``ZAI_`` + 10) so companion
+# filenames for the view stay within the 25-character limit.
 ARTIFACT_FILENAME_MAX_LEN = 25
 ARTIFACT_NAME_MAX_LEN = 14
+SERVICE_DEF_SUFFIX = "_SERVICED"
+SERVICE_BIND_SUFFIX = "_SERVICEB"
 
 
 def _normalize_zai_artifact_name(name: str) -> str:
-    """Uppercase ``ZAI_*`` object name shared by CDS / SRVD / SRVB artefacts."""
-    raw = re.sub(r"[^A-Za-z0-9_]+", "_", (name or "").strip()).strip("_") or "ZAI_GENERATED"
+    """Uppercase ``ZAI_*`` CDS view object name (strips service suffixes if present)."""
+    raw = re.sub(r"[^A-Za-z0-9_]+", "_", (name or "").strip()).strip("_") or "GENERATED"
     upper = raw.upper()
+    for suffix in (SERVICE_DEF_SUFFIX, SERVICE_BIND_SUFFIX):
+        if upper.endswith(suffix):
+            upper = upper[: -len(suffix)]
     if not upper.startswith("ZAI_"):
         upper = f"ZAI_{upper.lstrip('_')}"
     return upper[:ARTIFACT_NAME_MAX_LEN]
+
+
+def _derive_service_entity_names(cds_view_name: str) -> tuple[str, str]:
+    """Derive distinct SRVD / SRVB object names from the CDS view name.
+
+    Example: ``ZAI_PO_CR_APP`` → ``ZAI_PO_CR_APP_SERVICED``, ``ZAI_PO_CR_APP_SERVICEB``.
+    """
+    base = _normalize_zai_artifact_name(cds_view_name)
+    return (
+        f"{base}{SERVICE_DEF_SUFFIX}",
+        f"{base}{SERVICE_BIND_SUFFIX}",
+    )
 
 
 def _strip_cds_comments(cds_code: str) -> str:
@@ -1722,35 +1743,36 @@ def _write_cds_artifacts(
     """Write all companion files into ./generated_cds/<ddl_name>/. Returns the dir, or None on error.
 
     File names are always lower-cased per the S/4HANA 2025 guardrails.
-    The CDS view, SRVD, SRVB, and G4BA share the same ``ZAI_*`` object name
-    stem. Eight artefacts are emitted per view:
+    All object names use the ``ZAI_*`` prefix; service entities add a suffix
+    (``_serviced`` / ``_serviceb``). Eight artefacts are emitted per view:
 
-        <name>.ddls.asddls    CDS DDL source
-        <name>.ddls.baseinfo  ADT base info
-        <name>.ddls.xml       abapGit DDLS descriptor
-        <name>.parameters     view parameters (JSON)
-        <name>.srvd.srvdsrv   service definition source (define service ...)
-        <name>.srvd.xml       service definition metadata
-        <name>.srvb.xml       service binding
-        <name>.g4ba.xml       OData V4 gateway service-group binding
-
-    Each filename including its extension must be <= 25 characters.
+        <zai_*>.ddls.asddls              CDS DDL source
+        <zai_*>.ddls.baseinfo            ADT base info
+        <zai_*>.ddls.xml                 abapGit DDLS descriptor
+        <zai_*>.parameters               view parameters (JSON)
+        <zai_*_serviced>.srvd.srvdsrv    service definition source
+        <zai_*_serviced>.srvd.xml        service definition metadata
+        <zai_*_serviceb>.srvb.xml        service binding
+        <zai_*_serviceb>.g4ba.xml        OData V4 gateway service-group binding
     """
-    artifact_name = _normalize_zai_artifact_name(ddl_name)
-    file_stem = artifact_name.lower()
+    cds_name = _normalize_zai_artifact_name(ddl_name)
+    srvd_name, srvb_name = _derive_service_entity_names(cds_name)
+    cds_stem = cds_name.lower()
+    srvd_stem = srvd_name.lower()
+    srvb_stem = srvb_name.lower()
     base_root = os.path.abspath(
         os.path.join(os.getcwd(), "generated_cds")
     )
-    out_dir = os.path.join(base_root, artifact_name)
+    out_dir = os.path.join(base_root, cds_name)
     files: list[tuple[str, str]] = [
-        (f"{file_stem}.ddls.asddls", cds_code or ""),
-        (f"{file_stem}.ddls.baseinfo", baseinfo_text or ""),
-        (f"{file_stem}.ddls.xml", xml_text or ""),
-        (f"{file_stem}.parameters", parameters_text or ""),
-        (f"{file_stem}.srvd.srvdsrv", service_def_source_text or ""),
-        (f"{file_stem}.srvd.xml", service_def_text or ""),
-        (f"{file_stem}.srvb.xml", service_binding_text or ""),
-        (f"{file_stem}.g4ba.xml", g4ba_text or ""),
+        (f"{cds_stem}.ddls.asddls", cds_code or ""),
+        (f"{cds_stem}.ddls.baseinfo", baseinfo_text or ""),
+        (f"{cds_stem}.ddls.xml", xml_text or ""),
+        (f"{cds_stem}.parameters", parameters_text or ""),
+        (f"{srvd_stem}.srvd.srvdsrv", service_def_source_text or ""),
+        (f"{srvd_stem}.srvd.xml", service_def_text or ""),
+        (f"{srvb_stem}.srvb.xml", service_binding_text or ""),
+        (f"{srvb_stem}.g4ba.xml", g4ba_text or ""),
     ]
     try:
         os.makedirs(out_dir, exist_ok=True)
@@ -1787,8 +1809,7 @@ def _build_cds_artifacts(
     xml_text = _build_abapgit_ddls_xml(ddl_name, ddtext)
     parameters = _extract_cds_parameters(cds_code)
     parameters_text = _build_parameters_json(parameters, ddl_name)
-    service_def_name = ddl_name
-    service_binding_name = ddl_name
+    service_def_name, service_binding_name = _derive_service_entity_names(ddl_name)
     service_description = ddtext
     service_def_text = _build_service_definition_xml(
         service_def_name, ddl_name, service_description
@@ -1922,7 +1943,7 @@ _ODATA_PUBLISH_LINE_RE = re.compile(
 def _strip_odata_publish(text: str) -> str:
     """Remove any `@OData.publish: ...` annotation line.
 
-    OData exposure is handled via the separate `.srvd.xml` / `.srvb.srvb`
+    OData exposure is handled via the separate `.srvd.xml` / `.srvb.xml`
     service-binding artefacts, so this annotation must never appear in the
     generated CDS DDL — regardless of what the LLM or a stale reference
     example produced. Also strips it from surrounding markdown (the chat

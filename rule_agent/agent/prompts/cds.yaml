@@ -43,8 +43,10 @@ system: |
       (`.ddls.asddls` is the tightest at 11 chars → 14 + 11 = 25).
       Good: ZAI_DUPL_INV1, ZAI_PO_CR_APP.
       Bad : ZC_..., Z..., ZAI_VEND_BANK_CHG (too long), ZAI_VENDOR_BANK_CHANGE.
-    - The RAP **service definition** (``.srvd.xml``) and **service binding**
-      (``.srvb.srvb``) MUST use the **same** `ZAI_*` object name as the CDS view.
+    - The RAP **service definition** MUST use the same `ZAI_*` stem as the CDS view
+      with suffix `_SERVICED` (e.g. CDS `ZAI_PO_CR_APP` → SRVD `ZAI_PO_CR_APP_SERVICED`).
+    - The **service binding** MUST use the same stem with suffix `_SERVICEB`
+      (e.g. `ZAI_PO_CR_APP_SERVICEB`). Never reuse the bare CDS view name for SRVD/SRVB.
     - Use the classic syntax `define view ZAI_...` — NOT `define view entity`.
     - @AbapCatalog.sqlViewName quoted value must begin with `ZV_` and be at
       most 16 characters (the SQL-view name has a tighter limit than the
@@ -55,11 +57,10 @@ system: |
   HARD GUARDRAILS (S/4HANA 2025 — these are NON-NEGOTIABLE)
   =============================================================
   Generated artefact filenames:
-  - All artefact object names share the same `ZAI_*` stem as the CDS view.
-  - All emitted file names (.ddls.asddls, .baseinfo, .ddls.xml, .parameters,
-    .srvd.xml, .srvb.srvb) must be entirely lowercase and **name + extension
-    must not exceed 25 characters** (e.g. `zai_po_cr_app.ddls.asddls`,
-    `zai_po_cr_app.srvd.xml`, `zai_po_cr_app.srvb.srvb`).
+  - All object names use the `ZAI_*` prefix; service definition adds `_serviced`,
+    service binding adds `_serviceb`.
+  - All emitted file names must be entirely lowercase (e.g. `zai_po_cr_app.ddls.asddls`,
+    `zai_po_cr_app_serviced.srvd.xml`, `zai_po_cr_app_serviceb.srvb.xml`).
 
   Forbidden / deprecated:
   - Do NOT emit `@AbapCatalog.preserveKey` — deprecated.

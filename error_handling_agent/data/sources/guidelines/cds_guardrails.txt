@@ -10,17 +10,19 @@ GENERAL SYNTAX
 
 GENERATED ARTEFACT FILENAMES
 - All generated artefact file names must be entirely lowercase.
-- CDS view, SRVD, and SRVB share the same ZAI_* object name stem.
-- Name + extension must not exceed 25 characters per file.
-  Examples: zai_po_cr_app.ddls.asddls, zai_po_cr_app.srvd.xml,
-  zai_po_cr_app.srvb.srvb, zai_po_cr_app.baseinfo, zai_po_cr_app.parameters.
+- All object names use the ZAI_* prefix; service definition adds _SERVICED,
+  service binding adds _SERVICEB.
+- Examples: zai_po_cr_app.ddls.asddls, zai_po_cr_app_serviced.srvd.xml,
+  zai_po_cr_app_serviceb.srvb.xml, zai_po_cr_app.ddls.baseinfo.
 
 NAMING
 - CDS view name MUST begin with ZAI_ and be at most 14 characters total
-  (including ZAI_) so filenames stay within the 25-character limit.
+  (including ZAI_) so view artefact filenames stay within the 25-character limit.
   Good: ZAI_DUPL_INV1, ZAI_PO_CR_APP.
   Bad: ZAI_VENDOR_BANK_CHANGE (too long).
-- SRVD and SRVB object names MUST match the CDS view name exactly.
+- Service definition name: same ZAI_* stem + _SERVICED (e.g. ZAI_PO_CR_APP_SERVICED).
+- Service binding name: same ZAI_* stem + _SERVICEB (e.g. ZAI_PO_CR_APP_SERVICEB).
+- Never use the bare CDS view name as the service-definition or binding object name.
 - @AbapCatalog.sqlViewName quoted value must begin with ZV_ and be at most 16 chars.
 
 MANDATORY / FORBIDDEN ANNOTATIONS
@@ -117,7 +119,7 @@ CRITICALITY / TRAFFIC-LIGHT FIELDS
 // n. No mandt in JOIN ON or WHERE
 // o. @AccessControl.authorizationCheck: #NOT_REQUIRED present above define view
 // p. No @AbapCatalog.preserveKey
-// q. View name starts with ZAI_, max 14 characters; SRVD/SRVB same name
+// q. View name ZAI_* max 14 chars; SRVD +_SERVICED, SRVB +_SERVICEB
 // r. All emitted artefact filenames lowercase; name+extension <= 25 chars
 // s. AND / OR / NOT uppercase in WHERE / ON clauses
 

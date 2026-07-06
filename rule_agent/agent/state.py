@@ -30,10 +30,7 @@ class AgentState(TypedDict, total=False):
     approved: bool
     cds_delivered: bool
     session_ended: bool
-    # Companion artifacts emitted alongside the CDS view (baseinfo JSON, abapGit XML,
-    # parameters JSON, plus the RAP service artefacts: .srvd.srvdsrv source and
-    # .srvd.xml metadata for the service definition, .srvb.xml for the OData V4 / UI
-    # binding, and .g4ba.xml for the gateway service-group binding).
+    # Companion artifacts — all ZAI_*; service def adds _SERVICED, binding adds _SERVICEB.
     cds_ddl_name: Optional[str]
     cds_baseinfo: Optional[str]
     cds_xml: Optional[str]
