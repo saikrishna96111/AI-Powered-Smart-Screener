@@ -1,8 +1,3 @@
-// EXAMPLE: ZAI_PO_CREATOR_APPR
-// Source: Code_Scenarios (AutoRecovered).docx
-// This is a SYNTACTICALLY CORRECT, working CDS view. Treat as gold reference.
-// ----------------------------------------------------------------------------
-
 /*
 =============================================================
   CDS VIEW   : ZI_PO_CREATOR_APPROVER_SAME

@@ -1,8 +1,3 @@
-// EXAMPLE: ZAI_DUPL_INV1
-// Source: Code_Scenarios (AutoRecovered).docx
-// This is a SYNTACTICALLY CORRECT, working CDS view. Treat as gold reference.
-// ----------------------------------------------------------------------------
-
 @AbapCatalog.sqlViewName: 'ZV_DUP_INV'
 
 @AccessControl.authorizationCheck: #NOT_REQUIRED

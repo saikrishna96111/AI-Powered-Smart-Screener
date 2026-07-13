@@ -1,8 +1,3 @@
-// EXAMPLE: ZI_VEND_BANK_CHG_PRE_PAY
-// Source: Code_Scenarios (AutoRecovered).docx
-// This is a SYNTACTICALLY CORRECT, working CDS view. Treat as gold reference.
-// ----------------------------------------------------------------------------
-
 /*
 =============================================================
   CDS VIEW   : ZI_VEND_BANK_CHG_PRE_PAY
